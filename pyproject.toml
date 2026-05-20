@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "satchangegate"
+version = "0.1.0"
+description = "Preprocessing-first satellite temporal change detection PoC"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rasterio>=1.3",
+    "numpy>=1.24",
+    "scikit-image>=0.21",
+    "opencv-python-headless>=4.8",
+    "anthropic>=0.40",
+    "pydantic>=2.0",
+    "typer>=0.9",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+satchangegate = "satchangegate.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "oscd: requires OSCD dataset on disk",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

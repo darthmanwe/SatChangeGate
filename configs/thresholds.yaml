@@ -1,0 +1,47 @@
+# Mask thresholds (OSCD L1C heuristics — no SCL band)
+masks:
+  cloud_brightness: 0.35
+  cloud_ndvi_max: 0.2
+  snow_ndsi_min: 0.4
+  snow_nir_min: 0.25
+  water_ndwi_min: 0.3
+  shadow_nir_max: 0.15
+  shadow_brightness_max: 0.12
+
+# Quality gate
+quality:
+  cloud_fraction_max: 0.25
+  min_valid_pixel_fraction: 0.5
+  min_quality_score: 0.3
+
+# Classical change gate
+gate:
+  cloud_fraction_max: 0.25
+  registration_error_px_max: 1.5
+  min_changed_area_percent: 1.0
+  ndvi_delta_mean_min: 0.05
+  ndbi_delta_mean_min: 0.05
+  ndwi_delta_mean_min: 0.05
+  ssim_no_change_min: 0.95
+  phash_no_change_max: 8
+  index_delta_small: 0.03
+  cva_magnitude_threshold: 0.15
+
+# Radiometric
+radiometric:
+  percentile_low: 2
+  percentile_high: 98
+
+# Bands used (Sentinel-2)
+bands:
+  - B02
+  - B03
+  - B04
+  - B08
+  - B11
+  - B12
+
+rgb_bands:
+  - B04
+  - B03
+  - B02

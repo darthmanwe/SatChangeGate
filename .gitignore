@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Data & outputs (repo root only — not src/satchangegate/data/)
+/data/
+*.tif
+*.tiff
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+
+# Test artifacts
+.pytest_cache/
+.ruff_cache/
+htmlcov/
