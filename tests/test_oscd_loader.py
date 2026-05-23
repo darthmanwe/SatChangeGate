@@ -4,9 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from satchangegate.data.oscd import discover_pairs, list_pairs, load_bands, load_label_mask
+from satchangegate.data.oscd import (
+    default_oscd_root,
+    discover_pairs,
+    list_pairs,
+    load_bands,
+    load_label_mask,
+)
 
-OSCD_ROOT = Path("data/raw/oscd")
+OSCD_ROOT = default_oscd_root()
 
 
 @pytest.mark.oscd

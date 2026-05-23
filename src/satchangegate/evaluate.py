@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from satchangegate.config import load_thresholds
-from satchangegate.data.oscd import discover_pairs, list_pairs, load_label_mask
+from satchangegate.data.oscd import default_oscd_root, discover_pairs, list_pairs, load_label_mask
 from satchangegate.features.classical import compute_change_mask
 from satchangegate.pipeline import run_pair
 
@@ -47,7 +47,7 @@ def run_eval(
 ) -> dict[str, Any]:
     """Evaluate pipeline on OSCD split; return metrics dict."""
     cfg = load_thresholds()
-    oscd_root = Path(oscd_root)
+    oscd_root = Path(oscd_root or default_oscd_root())
     out_dir = Path(out_dir or Path("data/reports"))
     pairs = list_pairs(oscd_root, split)
     if not pairs:
@@ -107,8 +107,8 @@ def run_eval(
             raw_t2 = load_bands(pair.img2_dir, bands_list)
             b1, b2 = align_pair_bands(raw_t1, raw_t2, cfg=cfg)
             m = combine_pair_masks(
-                compute_ephemeral_masks(b1, cfg),
-                compute_ephemeral_masks(b2, cfg),
+                compute_ephemeral_masks(b1, cfg, layout=pair.layout),
+                compute_ephemeral_masks(b2, cfg, layout=pair.layout),
             )
             pred_mask = compute_change_mask(b1, b2, m.valid, cfg)
             if label.shape != pred_mask.shape:

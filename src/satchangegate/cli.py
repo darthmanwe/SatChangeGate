@@ -11,6 +11,7 @@ from rich.table import Table
 
 from satchangegate.config import load_thresholds
 from satchangegate.data.oscd import (
+    default_oscd_root,
     discover_pairs,
     list_pairs,
     print_download_instructions,
@@ -28,7 +29,7 @@ console = Console()
 
 @app.command("download-oscd")
 def download_oscd(
-    out: Path = typer.Option(Path("data/raw/oscd"), "--out", help="OSCD root directory"),
+    out: Path = typer.Option(default_oscd_root(), "--out", help="OSCD root directory"),
 ) -> None:
     """Print OSCD download instructions and verify layout."""
     print_download_instructions(out)
@@ -42,7 +43,7 @@ def download_oscd(
 @app.command("run")
 def run(
     pair: str = typer.Option(..., "--pair", help="OSCD pair id, e.g. beirut"),
-    oscd_root: Path = typer.Option(Path("data/raw/oscd"), "--oscd-root"),
+    oscd_root: Path = typer.Option(default_oscd_root(), "--oscd-root"),
     out: Path = typer.Option(Path("data/reports"), "--out"),
     skip_vlm: bool = typer.Option(False, "--skip-vlm"),
     skip_llm: bool = typer.Option(False, "--skip-llm"),
@@ -66,7 +67,7 @@ def run(
 @app.command("eval")
 def eval_cmd(
     split: str = typer.Option("test", "--split", help="train | test | all"),
-    oscd_root: Path = typer.Option(Path("data/raw/oscd"), "--oscd-root"),
+    oscd_root: Path = typer.Option(default_oscd_root(), "--oscd-root"),
     out: Path = typer.Option(Path("data/reports"), "--out"),
     skip_vlm: bool = typer.Option(True, "--skip-vlm", help="Skip VLM API calls in eval"),
     skip_llm: bool = typer.Option(True, "--skip-llm", help="Skip LLM API calls in eval"),

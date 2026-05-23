@@ -50,8 +50,21 @@ def _brightness(bands: dict[str, np.ndarray]) -> np.ndarray:
 def compute_ephemeral_masks(
     bands: dict[str, np.ndarray],
     cfg: dict[str, Any] | None = None,
+    layout: str = "multispectral",
 ) -> EphemeralMasks:
     """Compute boolean masks for one timestep."""
+    if layout == "rgb_png":
+        h, w = next(iter(bands.values())).shape
+        empty = np.zeros((h, w), dtype=bool)
+        valid = np.ones((h, w), dtype=bool)
+        return EphemeralMasks(
+            cloud=empty,
+            snow=empty,
+            water=empty,
+            shadow=empty,
+            valid=valid,
+        )
+
     cfg = cfg or {}
     mcfg = cfg.get("masks", {})
 

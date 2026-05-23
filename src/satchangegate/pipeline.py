@@ -62,14 +62,15 @@ def run_pair(
     raw_t1 = load_bands(pair.img1_dir, bands_list)
     raw_t2 = load_bands(pair.img2_dir, bands_list)
 
-    paths_t1 = _band_paths(pair.img1_dir, bands_list)
-    paths_t2 = _band_paths(pair.img2_dir, bands_list)
+    paths_t1 = _band_paths(pair.img1_dir, bands_list) if pair.img1_dir.is_dir() else {}
+    paths_t2 = _band_paths(pair.img2_dir, bands_list) if pair.img2_dir.is_dir() else {}
     bands_t1, bands_t2 = align_pair_bands(
         raw_t1, raw_t2, paths_t1, paths_t2, cfg
     )
 
-    masks_t1 = compute_ephemeral_masks(bands_t1, cfg)
-    masks_t2 = compute_ephemeral_masks(bands_t2, cfg)
+    layout = pair.layout
+    masks_t1 = compute_ephemeral_masks(bands_t1, cfg, layout=layout)
+    masks_t2 = compute_ephemeral_masks(bands_t2, cfg, layout=layout)
     from satchangegate.preprocess.masks import combine_pair_masks
 
     combined_masks = combine_pair_masks(masks_t1, masks_t2)
@@ -82,6 +83,8 @@ def run_pair(
         masks=combined_masks,
         quality=quality,
         cfg=cfg,
+        date_t1=pair.date_t1 or "t1",
+        date_t2=pair.date_t2 or "t2",
     )
 
     heatmap_path = processed_dir / "heatmap.png"

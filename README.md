@@ -19,7 +19,13 @@ copy .env.example .env   # set ANTHROPIC_API_KEY
 satchangegate download-oscd --out data/raw/oscd
 ```
 
-Download from [IEEE DataPort OSCD](https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection) and extract under `data/raw/oscd/<pair_id>/imgs_1|imgs_2/`.
+Download from [IEEE DataPort OSCD](https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection):
+
+1. **Images zip** — extract to `data/raw/oscd/` (creates `<city>/pair/img1.png`, `img2.png`, etc.)
+2. **Train Labels zip** — merge each `<city>/cm/cm.png` into `data/raw/oscd/<city>/cm/`
+3. **Test Labels zip** — same as train labels for test cities
+
+IEEE lists three separate files (images, train labels, test labels). The images archive is described as multispectral Sentinel-2, but the common IEEE **Images zip** extract is RGB PNG previews (`pair/img1.png`); per-band GeoTIFFs (`imgs_1/B02.tif`, etc.) may require the [official OSCD site](https://rcdaudt.github.io/oscd/) or building from Sentinel-2 via Medusa.
 
 ## Commands
 
