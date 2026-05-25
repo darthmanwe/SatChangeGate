@@ -161,20 +161,70 @@ def classical_gate(
 
     reg_px = quality.registration_error_px
 
+    structural_ok = (
+        ssim_score >= gcfg.get("ssim_no_change_min", 0.65)
+        and phash_dist <= gcfg.get("phash_no_change_max", 16)
+    )
+    area_thr = gcfg.get("min_changed_area_percent", 25.0)
+    cva_thr = gcfg.get("cva_magnitude_mean_min", 0.28)
+
+    landcover_spectral = (
+        ndvi_mean >= gcfg.get("ndvi_delta_mean_min", 0.10)
+        or ndbi_mean >= gcfg.get("ndbi_delta_mean_min", 0.08)
+    )
+    strong_landcover = (
+        ndvi_mean >= gcfg.get("ndvi_strong_min", 0.12)
+        or ndbi_mean >= gcfg.get("ndbi_strong_min", 0.10)
+    )
+    water_spectral = ndwi_mean >= gcfg.get("ndwi_delta_mean_min", 0.15)
+    area_change = changed_pct >= area_thr
+    structural_break = not structural_ok
+    cva_change = cva_mean >= cva_thr
+
     decision: GateDecision
     if cloud_max > gcfg.get("cloud_fraction_max", 0.25) or not quality.valid_observation:
         decision = "low_quality"
     elif (
-        changed_pct < gcfg.get("min_changed_area_percent", 1.0)
-        and ndvi_mean < gcfg.get("ndvi_delta_mean_min", 0.05)
-        and ndbi_mean < gcfg.get("ndbi_delta_mean_min", 0.05)
-        and ndwi_mean < gcfg.get("ndwi_delta_mean_min", 0.05)
-        and ssim_score >= gcfg.get("ssim_no_change_min", 0.95)
-        and phash_dist <= gcfg.get("phash_no_change_max", 8)
+        max(ndvi_mean, ndbi_mean) < gcfg.get("phenology_spectral_max", 0.08)
+        and ssim_score < gcfg.get("phenology_ssim_max", 0.30)
+        and changed_pct < gcfg.get("phenology_area_max_percent", 85.0)
     ):
         decision = "no_change"
-    else:
+    elif (
+        ssim_score < gcfg.get("unreliable_ssim_max", 0.08)
+        and max(ndvi_mean, ndbi_mean) < gcfg.get("unreliable_spectral_max", 0.10)
+    ):
+        decision = "no_change"
+    elif area_change and structural_break and changed_pct >= gcfg.get("high_area_structural_min", 70.0):
+        if max(ndvi_mean, ndbi_mean) >= gcfg.get("high_area_spectral_min", 0.078):
+            decision = "candidate_change"
+        else:
+            decision = "no_change"
+    elif strong_landcover and (area_change or structural_break):
         decision = "candidate_change"
+    elif landcover_spectral and area_change and structural_break:
+        decision = "candidate_change"
+    elif landcover_spectral and cva_change and area_change:
+        decision = "candidate_change"
+    elif (
+        ndbi_mean >= gcfg.get("ndbi_built_min", 0.09)
+        and area_change
+        and structural_break
+    ):
+        decision = "candidate_change"
+    elif water_spectral and area_change and cva_change:
+        decision = "candidate_change"
+    elif (
+        (ndvi_mean >= gcfg.get("ndvi_moderate_min", 0.065) or ndbi_mean >= gcfg.get("ndbi_moderate_min", 0.065))
+        and area_change
+        and structural_break
+        and changed_pct >= gcfg.get("moderate_area_min_percent", 45.0)
+    ):
+        decision = "candidate_change"
+    elif ndvi_mean >= gcfg.get("ndvi_strong_min", 0.12) and area_change:
+        decision = "candidate_change"
+    else:
+        decision = "no_change"
 
     result = ClassicalResult(
         tile_id=pair_id,

@@ -25,6 +25,22 @@ dev = [
     "pytest>=7.4",
     "ruff>=0.1",
 ]
+optimus = [
+    "huggingface_hub>=0.20",
+]
+goes = [
+    "goes2go>=2025.1",
+    "xarray>=2023.1",
+    "netCDF4>=1.6",
+    "h5py>=3.8",
+]
+data = [
+    "huggingface_hub>=0.20",
+    "goes2go>=2025.1",
+    "xarray>=2023.1",
+    "netCDF4>=1.6",
+    "h5py>=3.8",
+]
 
 [project.scripts]
 satchangegate = "satchangegate.cli:app"
@@ -36,6 +52,10 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "oscd: requires OSCD dataset on disk",
+    "optimus: requires OPTIMUS metadata/sample tar",
+    "goes: requires goes2go and network for GOES download",
+    "e2e: end-to-end integration (may call external APIs)",
+    "vlm: requires ANTHROPIC_API_KEY for live VLM",
 ]
 
 [tool.ruff]

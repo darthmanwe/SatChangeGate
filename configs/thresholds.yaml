@@ -14,18 +14,34 @@ quality:
   min_valid_pixel_fraction: 0.5
   min_quality_score: 0.3
 
-# Classical change gate
+# Classical change gate — tuned on OPTIMUS labeled tiles (148 + 425)
 gate:
   cloud_fraction_max: 0.25
   registration_error_px_max: 1.5
-  min_changed_area_percent: 1.0
-  ndvi_delta_mean_min: 0.05
-  ndbi_delta_mean_min: 0.05
-  ndwi_delta_mean_min: 0.05
-  ssim_no_change_min: 0.95
-  phash_no_change_max: 8
-  index_delta_small: 0.03
-  cva_magnitude_threshold: 0.15
+  min_changed_area_percent: 25.0
+  ndvi_delta_mean_min: 0.10
+  ndbi_delta_mean_min: 0.08
+  ndwi_delta_mean_min: 0.15
+  ndvi_strong_min: 0.12
+  ndbi_strong_min: 0.10
+  ndbi_built_min: 0.09
+  spectral_quiet_max: 0.07
+  ssim_no_change_min: 0.65
+  phash_no_change_max: 16
+  index_delta_small: 0.10
+  cva_magnitude_threshold: 0.24
+  cva_magnitude_mean_min: 0.28
+  illumination_no_change_max: 0.12
+  phenology_spectral_max: 0.08
+  phenology_ssim_max: 0.22
+  phenology_area_max_percent: 90.0
+  unreliable_ssim_max: 0.08
+  unreliable_spectral_max: 0.10
+  high_area_structural_min: 70.0
+  high_area_spectral_min: 0.078
+  ndvi_moderate_min: 0.065
+  ndbi_moderate_min: 0.065
+  moderate_area_min_percent: 45.0
 
 # Radiometric
 radiometric:
