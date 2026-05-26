@@ -2,7 +2,71 @@
 
 Preprocessing-first satellite temporal change detection PoC.
 
-**Narrow slice:** OSCD / OPTIMUS pairs → preprocessing + ephemeral masks → classical change gate → Anthropic VLM (candidates only) → Anthropic LLM markdown report.
+## Executive summary (CRO / CTO)
+
+### The idea
+
+Organizations monitoring land, infrastructure, or insurance exposure from satellite imagery face a cost problem: **running a vision-language model (VLM) or human review on every image pair does not scale**. Most pairs are unchanged, cloudy, or differ only because of season, sun angle, or atmospheric effects—not because something on the ground changed.
+
+SatChangeGate is a **gated review pipeline**: cheap, deterministic preprocessing and a classical change gate filter the stream first; **expensive VLM and LLM steps run only on candidates** that survive that filter.
+
+### How it is envisioned
+
+The target operating model is a three-tier funnel:
+
+```
+Every satellite pair
+    → Tier 0: quality + masks (cloud, snow, shadow, water)
+    → Tier 1: classical gate (SSIM, spectral deltas, change area)
+         ├─ no_change / low_quality  →  archive, no API spend
+         └─ candidate_change         →  Tier 2: VLM verification
+                                      →  Tier 3: LLM analyst report (optional)
+```
+
+**Design principles:**
+
+- **Preprocessing-first** — normalize, mask, and score quality before any model inference.
+- **Gate before VLM** — the classical layer exists to cut API cost and latency, not to replace final judgment.
+- **VLM as verifier, not detector** — the VLM receives a curated package (before/after RGB, heatmap, metadata) and classifies *real change vs artifact*, with artifact-risk fields.
+- **Human-in-the-loop by default** — outputs are analyst-ready; the system reduces volume, not accountability.
+
+Longer term, the same gate can front Sentinel-2 STAC feeds, operational AOIs, and batch monitoring jobs. This repo is the **proof that the funnel works on public benchmarks**, not the production platform.
+
+### The narrow slice (what this repo actually implements)
+
+This PoC deliberately scopes to a **single, reviewable path** so technical and risk leadership can evaluate the approach without a full geospatial platform build.
+
+| In scope (today) | Out of scope (deferred) |
+|------------------|-------------------------|
+| OSCD bitemporal pairs (24 RGB cities) | Global STAC / operational ingest |
+| OPTIMUS time series (sample tars 148, 425, 455) | Full 12 TB OPTIMUS corpus |
+| Classical gate with tuned thresholds | Deep change-detection models |
+| Anthropic VLM on **candidates only** | VLM on every pair |
+| Optional LLM markdown report | Streamlit / ops UI |
+| GOES ABI as **context metadata** (CONUS) | GOES-driven gate logic (planned) |
+| Eval harnesses + 100-pair E2E with live VLM | Production SLA, multi-tenant auth |
+
+**End-to-end path in one line:**
+
+OSCD / OPTIMUS pair → align / masks / quality → classical gate → [candidates] → VLM → LLM report
+
+### What we have shown so far
+
+- **Gate tuning** on labeled OPTIMUS tiles: F1 **0.93**, 100% change recall, ~27% of pairs filtered before VLM on that set.
+- **100-pair random E2E** (24 OSCD + 76 OPTIMUS, live VLM): **35%** filtered by gate; **64** VLM calls; **~27%** of all pairs surfaced as `real_change` vs naive review-everything.
+- **Cost narrative:** two-stage funnel reduces VLM spend; VLM further splits candidates into likely artifact vs real change.
+
+### What a CRO / CTO should still treat as open
+
+- OSCD inputs are RGB PNG previews—not full multispectral; gate recall on OSCD change pairs is ~46% in the E2E sample (conservative filter).
+- Labels and metrics are benchmark-specific; production AOIs need their own validation.
+- No production controls yet (audit logging, model versioning, rate limits, data residency) beyond PoC CLI and local reports.
+
+Detailed metrics, commands, and roadmap follow below.
+
+---
+
+**Narrow slice (technical):** OSCD / OPTIMUS pairs → preprocessing + ephemeral masks → classical change gate → Anthropic VLM (candidates only) → Anthropic LLM markdown report.
 
 ## Setup
 
