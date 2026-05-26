@@ -64,6 +64,16 @@ OSCD / OPTIMUS pair → align / masks / quality → classical gate → [candidat
 
 Detailed metrics, commands, and roadmap follow below.
 
+### Sample reports (representative outputs)
+
+Committed examples in [`public_reporting_sample/`](public_reporting_sample/) illustrate what the pipeline produces. They are **representative snapshots** from PoC runs—not exhaustive benchmarks. Full run artifacts stay under `data/reports/` (gitignored locally).
+
+| Sample | What it shows |
+|--------|----------------|
+| [`beirut.md`](public_reporting_sample/beirut.md) | End-to-end **LLM analyst report** for OSCD Beirut after classical gate + VLM (construction change, evidence sections) |
+| [`_optimus_eval_summary.md`](public_reporting_sample/_optimus_eval_summary.md) | **Gate-only eval** on labeled OPTIMUS tiles (group 148): metrics, confusion matrix, per-tile features |
+| [`_dev_tests_summary.json`](public_reporting_sample/_dev_tests_summary.json) | **Dev test battery** summary (negative controls + small OPTIMUS fixtures) |
+
 ---
 
 **Narrow slice (technical):** OSCD / OPTIMUS pairs → preprocessing + ephemeral masks → classical change gate → Anthropic VLM (candidates only) → Anthropic LLM markdown report.
