@@ -2,7 +2,7 @@
 
 Preprocessing-first satellite temporal change detection PoC.
 
-## Executive summary (CRO / CTO)
+## Executive summary
 
 ### The idea
 
