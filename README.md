@@ -66,7 +66,7 @@ Detailed metrics, commands, and roadmap follow below.
 
 ### Sample reports (representative outputs)
 
-Committed examples in [`public_reporting_sample/`](public_reporting_sample/) illustrate what the pipeline produces. They are **representative snapshots** from PoC runs—not exhaustive benchmarks. Full run artifacts stay under `data/reports/` (gitignored locally).
+Committed examples in [`public_reporting_sample/`](public_reporting_sample/) illustrate what the pipeline produces. They are **representative snapshots** from PoC runs. Full run artifacts stay under `data/reports/` (gitignored locally).
 
 | Sample | What it shows |
 |--------|----------------|
