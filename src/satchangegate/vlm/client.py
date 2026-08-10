@@ -62,7 +62,19 @@ class UsageRecord(BaseModel):
     cache_read_input_tokens: int = 0
 
     @property
+    def priced(self) -> bool:
+        """False when no published rate is known for this model."""
+        return self.model in PRICING_USD_PER_MTOK
+
+    @property
     def cost_usd(self) -> float:
+        """USD for this call, or 0.0 when the model has no published rate.
+
+        Check ``priced`` before reporting: an unpriced model would otherwise
+        make every downstream cost figure read $0.00, which is far worse than
+        reading "unknown" — the override the README invites
+        (ANTHROPIC_VLM_MODEL) is exactly how a caller reaches this path.
+        """
         rate_in, rate_out = PRICING_USD_PER_MTOK.get(self.model, (0.0, 0.0))
         return (self.input_tokens * rate_in + self.output_tokens * rate_out) / 1_000_000
 

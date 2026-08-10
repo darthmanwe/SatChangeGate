@@ -149,6 +149,15 @@ def sweep(
     return best
 
 
+def _num(value: float | None) -> str:
+    """Render a metric, distinguishing an undefined one from a legitimate 0.0.
+
+    ``value or float("nan")`` treats 0.0 as missing, so a threshold set that
+    flags only negatives printed "nan" instead of its true precision of 0.
+    """
+    return "n/a" if value is None else f"{value:.3f}"
+
+
 def _render_report(report: dict[str, Any]) -> str:
     b, base = report["best"]["metrics"], report["baseline"]["metrics"]
     return f"""# Gate tuning report

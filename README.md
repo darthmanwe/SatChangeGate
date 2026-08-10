@@ -102,8 +102,9 @@ of what it forwards, followed by a verifier that catches those errors for about
 1.4 cents each.
 
 Reproduce with `satchangegate e2e --split test --vlm --max-vlm-calls 20`.
-`--max-vlm-calls` caps spend, and the report labels a capped run and attributes
-the saving to the gate rather than to the cap.
+`--max-vlm-calls` caps spend across resumes, the report labels a capped run and
+attributes the saving to the gate rather than to the cap, and a model with no
+published rate is flagged rather than silently costed at $0.00.
 
 ## What this is not
 

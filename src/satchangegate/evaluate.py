@@ -56,6 +56,8 @@ class SceneCache:
     gray2: np.ndarray
     rgb1: np.ndarray
     rgb2: np.ndarray
+    disp1: np.ndarray
+    disp2: np.ndarray
     valid_observation: bool
     registration_px: float
     scene_threshold: float | None
@@ -97,6 +99,8 @@ def build_scene_cache(pair, settings: Settings) -> SceneCache:
         gray2=cv2.cvtColor(rgb_to_uint8(disp2), cv2.COLOR_RGB2GRAY),
         rgb1=rgb1,
         rgb2=rgb2,
+        disp1=disp1,
+        disp2=disp2,
         valid_observation=quality.valid_observation,
         registration_px=registration_px,
         water=combined.water,
@@ -132,7 +136,7 @@ def features_for_tile(cache: SceneCache, tile: Tile, settings: Settings) -> Gate
     ndwi_m, ndwi_a = _masked_mean(deltas["ndwi"], valid)
 
     return GateFeatures(
-        ssim=compute_ssim(cache.rgb1[ys, xs], cache.rgb2[ys, xs]),
+        ssim=compute_ssim(cache.disp1[ys, xs], cache.disp2[ys, xs], already_stretched=True),
         phash_distance=phash_distance(cache.gray1[ys, xs], cache.gray2[ys, xs]),
         ndvi_delta_mean=ndvi_m,
         ndbi_delta_mean=ndbi_m,

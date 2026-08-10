@@ -62,6 +62,9 @@ def apply_photometric_perturbation(
     return out
 
 
+VALID_NEGATIVE_MODES = ("identity", "stable", "photometric")
+
+
 def prepare_negative_pair(
     pair: ImagePair,
     mode: NegativeMode,
@@ -74,6 +77,10 @@ def prepare_negative_pair(
 
     Returns (bands_t1, bands_t2, run_id_suffix).
     """
+    if mode not in VALID_NEGATIVE_MODES:
+        # A typo previously fell through to the stable-crop branch, so the
+        # user got a different control than the one they asked for.
+        raise ValueError(f"Unknown negative mode {mode!r}; expected one of {VALID_NEGATIVE_MODES}")
     raw_t1 = load_bands(pair.img1_dir, bands_list)
     raw_t2 = load_bands(pair.img2_dir, bands_list)
 

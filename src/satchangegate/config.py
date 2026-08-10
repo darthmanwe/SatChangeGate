@@ -73,8 +73,9 @@ class MaskThresholds(_Base):
 
 class QualityThresholds(_Base):
     cloud_fraction_max: float = 0.25
+    # quality_score is the usable-pixel fraction, so this is the only floor.
+    # A separate min_quality_score would be the same check twice.
     min_valid_pixel_fraction: float = 0.50
-    min_quality_score: float = 0.30
     # Maximum tolerated co-registration error before a pair is called unusable.
     registration_error_px_max: float = 1.5
 

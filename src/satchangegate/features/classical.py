@@ -121,13 +121,19 @@ def phash_distance(gray1_u8: np.ndarray, gray2_u8: np.ndarray) -> int:
     return int(np.sum(_phash(gray1_u8) != _phash(gray2_u8)))
 
 
-def compute_ssim(rgb1: np.ndarray, rgb2: np.ndarray) -> float:
+def compute_ssim(rgb1: np.ndarray, rgb2: np.ndarray, *, already_stretched: bool = False) -> float:
     """Structural similarity on display-stretched RGB.
 
     Uses the Wang et al. (2004) 11x11 Gaussian window rather than skimage's
     uniform 7x7 default, so values are comparable to published SSIM figures.
+
+    Pass ``already_stretched`` when the caller has applied a scene-wide stretch.
+    Re-stretching a small crop normalises against that crop's own 2-98 range,
+    which on a uniform tile (water, bare field, car park) is sensor noise — the
+    stretch then amplifies noise to full scale and SSIM collapses toward 0,
+    while pHash on the scene-stretched image correctly reads 0 distance.
     """
-    a, b = stretch_for_display(rgb1, rgb2)
+    a, b = (rgb1, rgb2) if already_stretched else stretch_for_display(rgb1, rgb2)
     win = min(11, a.shape[0] - (1 - a.shape[0] % 2), a.shape[1] - (1 - a.shape[1] % 2))
     win = max(3, win if win % 2 == 1 else win - 1)
     return float(

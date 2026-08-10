@@ -32,7 +32,6 @@ masks:
 quality:
   cloud_fraction_max: 0.25
   min_valid_pixel_fraction: 0.50
-  min_quality_score: 0.30
   registration_error_px_max: 1.5
 
 gate:

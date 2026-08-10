@@ -271,6 +271,46 @@ class TestE2E:
         assert a == b
         assert a != c or len(tiles) <= 5
 
+    def test_resume_preserves_recorded_spend(self, fixture_root: Path, tmp_path: Path) -> None:
+        """A resumed run must not report $0.00 for calls that were paid for.
+
+        `_load_done` restores the rows but previously left the cost accumulators
+        empty, so a completed, fully-paid run published "$0.00 spent, 0% saved".
+        """
+        from satchangegate.e2e import E2EConfig, run_e2e
+
+        jsonl = tmp_path / "_e2e_all.jsonl"
+        jsonl.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            json.dumps(
+                {
+                    "tile_id": f"fixtureville_r0c{i}",
+                    "city": "fixtureville",
+                    "split": "train",
+                    "label": 1,
+                    "gate": "candidate_change",
+                    "gate_reason": "x",
+                    "gate_confidence": 0.9,
+                    "vlm_verdict": "real_change",
+                    "vlm_called": True,
+                    "cost_usd": 0.01,
+                    "error": None,
+                }
+            )
+            for i in range(3)
+        ]
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        summary = run_e2e(
+            fixture_root,
+            tmp_path,
+            config=E2EConfig(split="all", skip_vlm=True),
+            resume=True,
+        )
+        cost = summary["funnel_cost"]
+        assert cost["cost_usd"]["total"] == pytest.approx(0.03)
+        assert cost["n_vlm_calls"] >= 3
+
     def test_funnel_runs_gate_only_and_resumes(self, fixture_root: Path, tmp_path: Path) -> None:
         from satchangegate.e2e import E2EConfig, run_e2e
 

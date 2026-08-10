@@ -262,6 +262,9 @@ def dev_tests_cmd(
     from satchangegate.dev_controls import run_dev_tests
 
     summary = run_dev_tests(root, out)
+    if summary.get("error") or not summary["n_checks"]:
+        console.print(f"[red]{summary.get('error', 'no checks ran')}[/red]")
+        raise typer.Exit(1)
     table = Table(title="Dev control battery")
     for col in ("check", "expected", "actual", "pass"):
         table.add_column(col)

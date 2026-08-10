@@ -150,13 +150,19 @@ def run_from_bands(
     report_md = ""
     llm_called = False
     if not skip_llm:
-        report_md, llm_called, llm_record = generate_analyst_report(
-            ReportInput.from_pipeline(quality, gate_art.result, vlm_verdict),
-            api_key=api_key,
-            model=llm_model,
-        )
-        if llm_record is not None:
-            usage.append(llm_record)
+        # Degrade like the VLM path above. An unguarded call here would throw
+        # away the quality score, the classical result, and an already-paid-for
+        # VLM verdict before result.json is written.
+        try:
+            report_md, llm_called, llm_record = generate_analyst_report(
+                ReportInput.from_pipeline(quality, gate_art.result, vlm_verdict),
+                api_key=api_key,
+                model=llm_model,
+            )
+            if llm_record is not None:
+                usage.append(llm_record)
+        except Exception as exc:
+            error = "; ".join(filter(None, [error, f"llm: {type(exc).__name__}: {exc}"]))
 
     run_dir.mkdir(parents=True, exist_ok=True)
     report_path = run_dir / "report.md"

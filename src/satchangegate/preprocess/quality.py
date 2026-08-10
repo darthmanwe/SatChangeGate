@@ -1,10 +1,14 @@
 """Pair-level observation quality.
 
-The previous score summed the fractions of *overlapping* masks
-(``cloud + shadow + snow + 0.5*water``) and multiplied by the valid fraction.
-That double-counted any pixel flagged by two masks, could exceed 1.0, and drove
-the score to a clipped 0 for scenes that were merely partly cloudy. Contamination
-is now computed as a genuine set union over the mask arrays.
+``quality_score`` is the fraction of pixels usable in both timesteps — the
+complement of the union of every contamination mask.
+
+Two earlier forms were wrong. The first summed the fractions of *overlapping*
+masks (``cloud + shadow + snow + 0.5*water``), which double-counted any pixel
+flagged twice, could exceed 1.0, and clipped the score to 0 for merely
+partly-cloudy scenes. The second multiplied the valid fraction by
+``1 - (1 - valid_fraction)`` — squaring it — under a comment claiming a set
+union, which also made ``min_valid_pixel_fraction`` unreachable.
 """
 
 from __future__ import annotations
@@ -99,15 +103,18 @@ def compute_quality_score(
     shadow = float(np.maximum(masks_t1.shadow, masks_t2.shadow).mean())
     water = float(np.maximum(masks_t1.water, masks_t2.water).mean())
 
+    # `combined.valid` is already the complement of the union of every
+    # contamination mask, so the usable fraction *is* the quality score. The
+    # previous form multiplied it by (1 - (1 - valid_frac)), i.e. squared it,
+    # while a comment claimed it was performing a set union — and that squaring
+    # made `min_valid_pixel_fraction` unreachable, since `score >= 0.30`
+    # implies `valid_frac >= 0.5477` and strictly dominated the 0.50 floor.
     valid_frac = float(combined.valid.mean())
-    # Set union, so a pixel flagged as both cloud and shadow is counted once.
-    contaminated = float((~combined.valid).mean())
-    score = float(np.clip(valid_frac * (1.0 - contaminated), 0.0, 1.0))
+    score = valid_frac
 
     valid_observation = bool(
         cloud <= thresholds.cloud_fraction_max
         and valid_frac >= thresholds.min_valid_pixel_fraction
-        and score >= thresholds.min_quality_score
         and registration_ok
     )
 

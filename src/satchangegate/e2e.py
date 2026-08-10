@@ -102,7 +102,19 @@ def run_e2e(
 
     cost = FunnelCost(n_pairs=len(tiles))
     rows: list[dict[str, Any]] = list(done.values())
-    vlm_calls = 0
+    # Restore spend and call count from completed work. Without this a resumed
+    # run reports "$0.00 spent, 0% saved" for calls that were genuinely paid
+    # for, and --max-vlm-calls silently re-arms: three resumes at a cap of 20
+    # would buy 60 calls.
+    for prior in done.values():
+        if not prior.get("vlm_called"):
+            continue
+        prior_cost = float(prior.get("cost_usd") or 0.0)
+        cost.vlm_cost_usd += prior_cost
+        cost.per_call_costs.append(prior_cost)
+        if prior.get("error"):
+            cost.n_errors += 1
+    vlm_calls = sum(1 for r in done.values() if r.get("vlm_called"))
 
     with open(jsonl_path, "a", encoding="utf-8") as sink:
         for city in sorted(by_city):
@@ -144,6 +156,8 @@ def run_e2e(
                         row["vlm_change_type"] = verdict.change_type
                         row["vlm_confidence"] = verdict.confidence
                     if record is not None:
+                        if not record.priced:
+                            cost.n_unpriced_calls += 1
                         cost.vlm_cost_usd += record.cost_usd
                         cost.input_tokens += record.input_tokens
                         cost.output_tokens += record.output_tokens
@@ -203,6 +217,10 @@ def _verify_tile(cache, tile, feats, settings, api_key, model, out_dir):
 # in this scene, so it cannot tell a new building from an ordinary rooftop.
 CONTEXT_FACTOR = 3
 
+# Cyan, in R,G,B order. The metadata tells the model to judge inside "the cyan
+# box", so this constant and that sentence must not drift apart.
+ROI_BOX_RGB = (0, 255, 255)
+
 
 def _context_window(
     tile, height: int, width: int
@@ -222,7 +240,8 @@ def _draw_box(img_u8, box: tuple[int, int, int, int]):
 
     out = img_u8.copy()
     y0, x0, y1, x1 = box
-    cv2.rectangle(out, (x0, y0), (x1 - 1, y1 - 1), (255, 255, 0), 1)
+    # Array is R,G,B (BGR conversion happens at write time), so this is cyan.
+    cv2.rectangle(out, (x0, y0), (x1 - 1, y1 - 1), ROI_BOX_RGB, 1)
     return out
 
 
@@ -313,6 +332,12 @@ def _render(s: dict[str, Any]) -> str:
         "",
         "## Cost (measured from API token usage)",
         "",
+        (
+            f"> WARNING: {c['n_unpriced_calls']} call(s) used a model with no "
+            "published rate; the costs below understate actual spend."
+            if not c["cost_is_complete"]
+            else ""
+        ),
         f"- Actually spent: **${c['cost_usd']['total']}** "
         f"({c['input_tokens']} in / {c['output_tokens']} out tokens, "
         f"{c['n_vlm_calls']} calls at ${c['cost_usd']['mean_per_vlm_call']} each)",

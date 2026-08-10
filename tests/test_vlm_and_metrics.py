@@ -283,3 +283,21 @@ class TestMetrics:
 
     def test_empty_interval_is_maximally_uncertain(self) -> None:
         assert wilson_interval(0, 0) == (0.0, 1.0)
+
+
+class TestCostIntegrity:
+    """Regressions for cost figures that silently read as $0.00."""
+
+    def test_unpriced_model_is_flagged_not_reported_as_free(self) -> None:
+        """The documented ANTHROPIC_VLM_MODEL override reaches this path."""
+        rec = UsageRecord(model="some-future-model", kind="vlm", input_tokens=5000)
+        assert rec.priced is False
+        cost = FunnelCost(n_pairs=10, n_candidates=1, n_vlm_calls=1, n_unpriced_calls=1)
+        out = cost.to_dict()
+        assert out["cost_is_complete"] is False
+        assert out["n_unpriced_calls"] == 1
+
+    def test_known_model_reports_complete_cost(self) -> None:
+        rec = UsageRecord(model="claude-sonnet-5", kind="vlm", input_tokens=5000)
+        assert rec.priced is True
+        assert FunnelCost(n_pairs=1, n_candidates=1, n_vlm_calls=1).to_dict()["cost_is_complete"]

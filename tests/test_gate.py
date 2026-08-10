@@ -184,3 +184,54 @@ class TestSSIM:
             )
             < 0.5
         )
+
+
+class TestShippedThresholds:
+    """Pin behaviour under the *shipped* config, not the pydantic defaults.
+
+    Every test above builds `GateThresholds()`, which is the fallback used only
+    when the YAML is missing. The runtime reads `get_settings()`, and the two
+    disagree on five decision thresholds. Without these tests an edit to
+    `configs/thresholds.yaml` could invert real gate behaviour with the suite
+    still green — the same class of defect as a tuner optimising a model the
+    pipeline does not run.
+    """
+
+    def test_yaml_is_what_the_runtime_actually_loads(self) -> None:
+        from satchangegate.config import GateThresholds, get_settings
+
+        shipped = get_settings().gate
+        defaults = GateThresholds()
+        differing = {k for k in shipped.model_dump() if getattr(shipped, k) != getattr(defaults, k)}
+        # The shipped values are tuned and are expected to differ; this asserts
+        # the divergence is real so nobody mistakes the defaults for production.
+        assert differing, "shipped config no longer overrides any default"
+
+    def test_quiet_tile_is_filtered_under_shipped_config(self) -> None:
+        from satchangegate.config import get_settings
+
+        decision, _, _ = decide(features(), get_settings().gate)
+        assert decision == "no_change"
+
+    def test_strong_change_is_forwarded_under_shipped_config(self) -> None:
+        from satchangegate.config import get_settings
+
+        t = get_settings().gate
+        decision, _, _ = decide(
+            features(
+                ndvi_delta_abs_mean=t.ndvi_strong_min + 0.01,
+                changed_area_percent=t.min_changed_area_percent + 1,
+            ),
+            t,
+        )
+        assert decision == "candidate_change"
+
+    def test_failed_quality_wins_under_shipped_config(self) -> None:
+        from satchangegate.config import get_settings
+
+        t = get_settings().gate
+        decision, _, _ = decide(
+            features(ndvi_delta_abs_mean=0.9, changed_area_percent=99.0, valid_observation=False),
+            t,
+        )
+        assert decision == "low_quality"

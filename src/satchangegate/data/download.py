@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -89,6 +90,25 @@ def _safe_extract(archive: Path, dest: Path) -> None:
             if not target.is_relative_to(dest):
                 raise ValueError(f"Unsafe path in {archive.name}: {member.filename!r}")
         zf.extractall(dest)
+
+
+def safe_tar_extract(tf: tarfile.TarFile, dest: Path) -> None:
+    """Extract a tar, refusing members that escape ``dest``.
+
+    ``TarFile.extractall`` applies no filter before Python 3.14, so a member
+    named ``../../.ssh/authorized_keys`` writes outside the destination. The zip
+    path has had this guard; the tar path did not.
+    """
+    dest = dest.resolve()
+    for member in tf.getmembers():
+        target = (dest / member.name).resolve()
+        if not target.is_relative_to(dest):
+            raise ValueError(f"Unsafe path in archive: {member.name!r}")
+        if member.issym() or member.islnk():
+            link = (target.parent / member.linkname).resolve()
+            if not link.is_relative_to(dest):
+                raise ValueError(f"Unsafe link in archive: {member.name!r}")
+    tf.extractall(dest, filter="data")
 
 
 def _fetch(filename: str, zips_dir: Path, *, verify: bool) -> Path:

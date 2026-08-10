@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from satchangegate.config import Settings
+from satchangegate.config import Settings, get_settings
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "mini_oscd"
 
@@ -30,7 +30,8 @@ def _no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings()
+    """The configuration the runtime actually loads, not the bare defaults."""
+    return get_settings()
 
 
 @pytest.fixture

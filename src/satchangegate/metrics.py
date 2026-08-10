@@ -173,6 +173,7 @@ class FunnelCost:
     n_candidates: int = 0
     n_vlm_calls: int = 0
     n_errors: int = 0
+    n_unpriced_calls: int = 0
     vlm_cost_usd: float = 0.0
     llm_cost_usd: float = 0.0
     input_tokens: int = 0
@@ -220,4 +221,8 @@ class FunnelCost:
             "savings_pct": (round(100.0 * (1 - projected / naive), 2) if naive > 0 else 0.0),
             "vlm_budget_capped": self.n_vlm_calls < self.n_candidates,
             "n_candidates": self.n_candidates,
+            # When a model has no published rate every figure above understates
+            # spend; say so rather than letting $0.00 read as free.
+            "n_unpriced_calls": self.n_unpriced_calls,
+            "cost_is_complete": self.n_unpriced_calls == 0,
         }
