@@ -9,6 +9,7 @@ could make live, billed API calls.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +48,7 @@ def oscd_root() -> Path:
     return root
 
 
-def synthetic_bands(
+def _synthetic_bands(
     *,
     nir: float = 0.32,
     red: float = 0.035,
@@ -58,7 +59,10 @@ def synthetic_bands(
     size: int = 64,
 ) -> dict[str, np.ndarray]:
     """Uniform reflectance patch with the six gate bands."""
-    full = lambda v: np.full((size, size), v, dtype=np.float32)  # noqa: E731
+
+    def full(value: float) -> np.ndarray:
+        return np.full((size, size), value, dtype=np.float32)
+
     return {
         "B02": full(blue),
         "B03": full(green),
@@ -67,3 +71,15 @@ def synthetic_bands(
         "B11": full(swir1),
         "B12": full(swir2),
     }
+
+
+@pytest.fixture
+def synthetic_bands() -> Callable[..., dict[str, np.ndarray]]:
+    """Factory fixture for uniform reflectance patches.
+
+    Exposed as a fixture rather than an importable helper: ``from
+    tests.conftest import ...`` relies on the repository root being on
+    sys.path, which holds under an editable install but fails on a clean CI
+    runner.
+    """
+    return _synthetic_bands

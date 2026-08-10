@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
-from tests.conftest import synthetic_bands
 
 from satchangegate.config import MaskThresholds, QualityThresholds
 from satchangegate.features.indices import MIN_DENOMINATOR, ndbi, ndsi, ndvi, ndwi
@@ -57,24 +58,24 @@ class TestIndices:
 
 
 class TestMasks:
-    def test_cloud_detected_on_bright_unvegetated_pixels(self) -> None:
+    def test_cloud_detected_on_bright_unvegetated_pixels(self, synthetic_bands: Callable) -> None:
         bands = synthetic_bands(blue=0.5, green=0.5, red=0.5, nir=0.5, swir1=0.4)
         masks = compute_ephemeral_masks(bands, MaskThresholds())
         assert masks.assessed
         assert masks.cloud_fraction is not None and masks.cloud_fraction > 0.5
 
-    def test_vegetation_is_not_flagged_as_cloud(self) -> None:
+    def test_vegetation_is_not_flagged_as_cloud(self, synthetic_bands: Callable) -> None:
         masks = compute_ephemeral_masks(synthetic_bands(), MaskThresholds())
         assert masks.cloud_fraction == 0.0
 
-    def test_snow_is_not_double_counted_as_cloud(self) -> None:
+    def test_snow_is_not_double_counted_as_cloud(self, synthetic_bands: Callable) -> None:
         """A pixel must not be both snow and cloud; that double-penalised quality."""
         bands = synthetic_bands(green=0.75, swir1=0.05, nir=0.55, blue=0.7, red=0.7)
         masks = compute_ephemeral_masks(bands, MaskThresholds())
         assert masks.snow_fraction is not None and masks.snow_fraction > 0.5
         assert not (masks.snow & masks.cloud).any()
 
-    def test_water_is_reported_but_stays_valid(self) -> None:
+    def test_water_is_reported_but_stays_valid(self, synthetic_bands: Callable) -> None:
         """Water must not be subtracted from validity, or flooding is undetectable."""
         bands = synthetic_bands(green=0.04, nir=0.015, red=0.028, blue=0.045, swir1=0.008)
         masks = compute_ephemeral_masks(bands, MaskThresholds())
@@ -89,7 +90,7 @@ class TestMasks:
         assert masks.assessed is False
         assert masks.cloud_fraction is None
 
-    def test_combine_is_union_of_contamination(self) -> None:
+    def test_combine_is_union_of_contamination(self, synthetic_bands: Callable) -> None:
         a = compute_ephemeral_masks(
             synthetic_bands(blue=0.5, green=0.5, red=0.5, nir=0.5), MaskThresholds()
         )
@@ -107,14 +108,14 @@ class TestQuality:
         assert q.cloud_fraction_max is None
         assert q.quality_score is None
 
-    def test_contamination_never_exceeds_one(self) -> None:
+    def test_contamination_never_exceeds_one(self, synthetic_bands: Callable) -> None:
         """Overlapping masks previously summed past 1.0 and clipped the score to 0."""
         bands = synthetic_bands(blue=0.6, green=0.6, red=0.6, nir=0.5, swir1=0.05)
         m = compute_ephemeral_masks(bands, MaskThresholds())
         q = compute_quality_score(m, m, QualityThresholds())
         assert q.quality_score is not None and 0.0 <= q.quality_score <= 1.0
 
-    def test_registration_error_gates_the_observation(self) -> None:
+    def test_registration_error_gates_the_observation(self, synthetic_bands: Callable) -> None:
         m = compute_ephemeral_masks(synthetic_bands(), MaskThresholds())
         ok = compute_quality_score(m, m, QualityThresholds(), registration_error_px=0.4)
         bad = compute_quality_score(m, m, QualityThresholds(), registration_error_px=9.0)
