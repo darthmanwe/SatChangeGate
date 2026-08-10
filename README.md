@@ -205,7 +205,7 @@ Anything that can spend money defaults to not spending it; `--vlm` is opt-in and
 ## Development
 
 ```bash
-make lint type test    # ruff, mypy, 101 offline tests
+make lint type test    # ruff, mypy, 109 offline tests
 make cov               # coverage report
 ```
 
