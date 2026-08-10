@@ -1,0 +1,75 @@
+{
+  "split": "test",
+  "cities": [
+    "brasilia",
+    "chongqing",
+    "dubai",
+    "lasvegas",
+    "milano",
+    "montpellier",
+    "norcia",
+    "rio",
+    "saclay_w",
+    "valencia"
+  ],
+  "tile_summary": {
+    "test": {
+      "positive": 364,
+      "negative": 257,
+      "cities": 10
+    }
+  },
+  "n_tiles": 621,
+  "n_low_quality": 87,
+  "n_candidate_change": 220,
+  "candidate_rate_pct": 35.43,
+  "gate_filtered_pct": 64.57,
+  "metrics": {
+    "n": 534,
+    "n_positive": 345,
+    "n_negative": 189,
+    "confusion": {
+      "tp": 177,
+      "fp": 43,
+      "fn": 168,
+      "tn": 146
+    },
+    "recall": 0.513,
+    "recall_ci95": [
+      0.4604,
+      0.5654
+    ],
+    "has_negative_class": true,
+    "precision": 0.8045,
+    "precision_ci95": [
+      0.7471,
+      0.8515
+    ],
+    "specificity": 0.7725,
+    "specificity_ci95": [
+      0.7076,
+      0.8265
+    ],
+    "f1": 0.6265,
+    "balanced_accuracy": 0.6428
+  },
+  "thresholds": {
+    "min_changed_area_percent": 2.0,
+    "ndvi_delta_mean_min": 0.02,
+    "ndbi_delta_mean_min": 0.02,
+    "ndwi_delta_mean_min": 0.15,
+    "ndvi_strong_min": 0.25,
+    "ndbi_strong_min": 0.25,
+    "ssim_no_change_min": 0.65,
+    "phash_no_change_max": 16,
+    "adaptive_threshold": true,
+    "background_sigma": 2.0,
+    "min_absolute_delta": 0.1,
+    "max_absolute_delta": 0.3,
+    "index_delta_small": 0.1,
+    "cva_magnitude_threshold": 0.24,
+    "cva_magnitude_mean_min": 0.28,
+    "min_component_size_px": 32,
+    "open_radius_px": 1
+  }
+}
