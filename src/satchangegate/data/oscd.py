@@ -1,7 +1,22 @@
-"""OSCD (Onera Satellite Change Detection) dataset loader."""
+"""OSCD (Onera Satellite Change Detection) dataset loader.
+
+Reads the full 13-band Sentinel-2 L1C release. Bands are returned as
+top-of-atmosphere reflectance (raw DN divided by 10000), which is the unit every
+threshold in ``configs/thresholds.yaml`` is expressed in. TOA reflectance is
+nominally [0, 1] but legitimately exceeds 1 over bright targets such as cloud
+tops and specular water, so values are deliberately not clipped.
+
+Historical note: an earlier version of this module synthesised NIR and SWIR from
+RGB previews as fixed linear combinations, e.g. ``nir = 0.6*green + 0.4*red``.
+Measured against the real bands on Beirut, that made NDVI and NDWI 0.995
+correlated (one feature under two names) and left the fake NDVI *negatively*
+correlated (-0.49) with the true NDVI, detecting 0% vegetation where the real
+index finds 12%. That path is deleted; only real bands are loaded.
+"""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -10,18 +25,11 @@ import cv2
 import numpy as np
 import rasterio
 
-# Fallback split when train.txt / test.txt are absent (full multispectral release)
-OSCD_TRAIN_PAIRS = [
-    "abudhabi", "aguasclaras", "beirut", "bordeaux", "brasilia", "chongqing",
-    "cupertino", "mumbai", "nantes", "paris", "pisa", "saclay_w", "valencia", "vegas",
-]
-OSCD_TEST_PAIRS = [
-    "dubai", "lasvegas", "melbourne", "montpellier", "norcia", "rio",
-    "rotterdam", "saclay_e", "toronto", "toulouse",
-]
+from satchangegate.config import ALL_BANDS, GATE_BANDS, S2_REFLECTANCE_SCALE
+from satchangegate.data.download import OSCD_TEST_CITIES, OSCD_TRAIN_CITIES
 
-DEFAULT_BANDS = ["B02", "B03", "B04", "B08", "B11", "B12"]
-Layout = Literal["multispectral", "rgb_png"]
+DEFAULT_BANDS = list(GATE_BANDS)
+Split = Literal["train", "test"]
 
 
 @dataclass
@@ -29,11 +37,10 @@ class ImagePair:
     """One OSCD bitemporal image pair."""
 
     pair_id: str
-    split: Literal["train", "test"]
+    split: Split
     img1_dir: Path
     img2_dir: Path
     label_path: Path | None
-    layout: Layout = "multispectral"
     date_t1: str | None = None
     date_t2: str | None = None
 
@@ -43,30 +50,28 @@ def default_oscd_root() -> Path:
     return Path("data/raw/oscd")
 
 
-def _load_split_lists(root: Path) -> tuple[set[str], set[str]]:
-    train: set[str] = set()
-    test: set[str] = set()
-    train_file = root / "train.txt"
-    test_file = root / "test.txt"
-    if train_file.is_file():
-        train = {s.strip() for s in train_file.read_text(encoding="utf-8").split(",") if s.strip()}
-    if test_file.is_file():
-        test = {s.strip() for s in test_file.read_text(encoding="utf-8").split(",") if s.strip()}
-    return train, test
+def load_splits(root: Path) -> tuple[set[str], set[str]]:
+    """Train/test city sets.
+
+    Prefers ``splits.json`` written by the downloader (derived from which label
+    archive each city appears in); falls back to the packaged constants.
+    """
+    splits_file = root / "splits.json"
+    if splits_file.is_file():
+        data = json.loads(splits_file.read_text(encoding="utf-8"))
+        return set(data.get("train", ())), set(data.get("test", ()))
+    return set(OSCD_TRAIN_CITIES), set(OSCD_TEST_CITIES)
 
 
-def _split_for_pair(
-    pair_id: str,
-    train: set[str],
-    test: set[str],
-) -> Literal["train", "test"]:
+def _split_for_pair(pair_id: str, train: set[str], test: set[str]) -> Split:
     if pair_id in test:
         return "test"
     if pair_id in train:
         return "train"
-    if pair_id in OSCD_TEST_PAIRS:
-        return "test"
-    return "train"
+    raise KeyError(
+        f"City {pair_id!r} is in neither split. Re-run `satchangegate download-oscd` "
+        "so splits.json is regenerated from the label archives."
+    )
 
 
 def _format_date(raw: str) -> str:
@@ -90,37 +95,34 @@ def _parse_dates(pair_root: Path) -> tuple[str | None, str | None]:
     return d1, d2
 
 
-def _pair_sources(root: Path, pair_id: str) -> tuple[Path, Path, Layout]:
-    """Resolve t1/t2 sources and layout for a pair."""
+def _pair_sources(root: Path, pair_id: str) -> tuple[Path, Path]:
+    """Resolve the t1/t2 band directories for a pair.
+
+    ``imgs_*_rect`` holds the co-registered bands resampled to one common grid
+    with plain ``B01.tif`` names. ``imgs_*`` holds the original per-band scene
+    tiles at native 10/20/60 m resolutions under long product filenames, which
+    are not directly stackable.
+    """
     pair_root = root / pair_id
+    rect1, rect2 = pair_root / "imgs_1_rect", pair_root / "imgs_2_rect"
+    if rect1.is_dir() and rect2.is_dir():
+        return rect1, rect2
 
-    pair_png = pair_root / "pair"
-    img1_png = pair_png / "img1.png"
-    img2_png = pair_png / "img2.png"
-    if img1_png.is_file() and img2_png.is_file():
-        return img1_png, img2_png, "rgb_png"
+    raw1, raw2 = pair_root / "imgs_1", pair_root / "imgs_2"
+    if raw1.is_dir() and raw2.is_dir():
+        return raw1, raw2
 
-    if (pair_root / "imgs_1").is_dir():
-        return pair_root / "imgs_1", pair_root / "imgs_2", "multispectral"
-
-    if (pair_root / "Osm_change_detection").is_dir():
-        base = pair_root / "Osm_change_detection"
-        return base / "imgs_1", base / "imgs_2", "multispectral"
-
-    if (pair_root / "B02.tif").is_file():
-        return pair_root, pair_root, "multispectral"
-
-    raise FileNotFoundError(f"Cannot find image pair under {pair_root}")
+    raise FileNotFoundError(
+        f"No band directories under {pair_root}. Run `satchangegate download-oscd`."
+    )
 
 
 def _label_path(root: Path, pair_id: str) -> Path | None:
-    for candidate in [
+    for candidate in (
         root / pair_id / "cm" / "cm.png",
         root / pair_id / "cm" / f"{pair_id}-cm.tif",
         root / pair_id / "cm" / "cm.tif",
-        root / pair_id / "Osm_change_detection" / "cm" / "cm.tif",
-        root / pair_id / "label" / "cm.tif",
-    ]:
+    ):
         if candidate.is_file():
             return candidate
     return None
@@ -131,55 +133,31 @@ def _make_pair(root: Path, pair_id: str, train: set[str], test: set[str]) -> Ima
     if not pair_root.is_dir():
         return None
     try:
-        img1, img2, layout = _pair_sources(root, pair_id)
-    except FileNotFoundError:
+        img1, img2 = _pair_sources(root, pair_id)
+        split = _split_for_pair(pair_id, train, test)
+    except (FileNotFoundError, KeyError):
         return None
     d1, d2 = _parse_dates(pair_root)
     return ImagePair(
         pair_id=pair_id,
-        split=_split_for_pair(pair_id, train, test),
+        split=split,
         img1_dir=img1,
         img2_dir=img2,
         label_path=_label_path(root, pair_id),
-        layout=layout,
         date_t1=d1,
         date_t2=d2,
     )
 
 
-def list_pairs(root: Path | None = None, split: str = "all") -> list[ImagePair]:
-    """List OSCD pairs under root for the given split."""
-    root = Path(root or default_oscd_root())
-    train, test = _load_split_lists(root)
-    if train or test:
-        ids = sorted(train | test)
-    elif split == "train":
-        ids = OSCD_TRAIN_PAIRS
-    elif split == "test":
-        ids = OSCD_TEST_PAIRS
-    else:
-        ids = OSCD_TRAIN_PAIRS + OSCD_TEST_PAIRS
-
-    pairs: list[ImagePair] = []
-    for pair_id in ids:
-        pair = _make_pair(root, pair_id, train, test)
-        if pair is None:
-            continue
-        if split != "all" and pair.split != split:
-            continue
-        pairs.append(pair)
-    return pairs
-
-
 def discover_pairs(root: Path | None = None) -> list[ImagePair]:
-    """Discover all pair directories under root."""
+    """Discover all pair directories under root, in deterministic order."""
     root = Path(root or default_oscd_root())
     if not root.is_dir():
         return []
-    train, test = _load_split_lists(root)
+    train, test = load_splits(root)
     pairs: list[ImagePair] = []
     for entry in sorted(root.iterdir()):
-        if not entry.is_dir():
+        if not entry.is_dir() or entry.name.startswith("_"):
             continue
         pair = _make_pair(root, entry.name, train, test)
         if pair is not None:
@@ -187,64 +165,67 @@ def discover_pairs(root: Path | None = None) -> list[ImagePair]:
     return pairs
 
 
-def _png_to_pseudo_bands(path: Path, bands: list[str]) -> dict[str, np.ndarray]:
-    """Map RGB PNG preview to pseudo Sentinel-2 bands for index/gate math."""
-    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if img is None:
-        raise FileNotFoundError(f"Could not read image: {path}")
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    red, green, blue = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    nir = np.clip(0.6 * green + 0.4 * red, 0.0, 1.0)
-    swir1 = np.clip(0.7 * red + 0.2 * green + 0.1 * blue, 0.0, 1.0)
-    swir2 = np.clip(0.8 * red + 0.15 * green, 0.0, 1.0)
-    mapping = {
-        "B02": blue,
-        "B03": green,
-        "B04": red,
-        "B08": nir,
-        "B11": swir1,
-        "B12": swir2,
-    }
-    return {band: mapping[band] for band in bands}
+def list_pairs(root: Path | None = None, split: str = "all") -> list[ImagePair]:
+    """List OSCD pairs for the given split ('train', 'test', or 'all')."""
+    if split not in ("train", "test", "all"):
+        raise ValueError(f"split must be train|test|all, got {split!r}")
+    pairs = discover_pairs(root)
+    if split == "all":
+        return pairs
+    return [p for p in pairs if p.split == split]
 
 
-def load_bands(source: Path, bands: list[str] | None = None) -> dict[str, np.ndarray]:
-    """Load band arrays from a timestep directory or RGB PNG file."""
+def _band_file(source: Path, band: str) -> Path | None:
+    """Locate a band's GeoTIFF, tolerating both rect and raw naming."""
+    for name in (f"{band}.tif", f"{band.lower()}.tif"):
+        candidate = source / name
+        if candidate.is_file():
+            return candidate
+    # Raw scene tiles: '..._B01.tif'
+    matches = sorted(source.glob(f"*_{band}.tif"))
+    return matches[0] if matches else None
+
+
+def load_bands(
+    source: Path,
+    bands: list[str] | None = None,
+    *,
+    scale: bool = True,
+) -> dict[str, np.ndarray]:
+    """Load bands from a timestep directory as float32 TOA reflectance.
+
+    Args:
+        source: A directory of per-band GeoTIFFs.
+        bands: Band names to load; defaults to the six the gate consumes.
+        scale: Divide raw DN by 10000 to yield reflectance in [0, 1].
+    """
     source = Path(source)
-    bands = bands or DEFAULT_BANDS
-
-    if source.is_file():
-        suffix = source.suffix.lower()
-        if suffix in {".png", ".jpg", ".jpeg"}:
-            return _png_to_pseudo_bands(source, bands)
-        if suffix in {".tif", ".tiff"}:
-            with rasterio.open(source) as src:
-                arr = src.read(1).astype(np.float32)
-            return {bands[0]: arr}
-
-    if (source / "img1.png").is_file():
-        raise ValueError(f"Ambiguous PNG dir {source}; pass img1.png or img2.png path")
+    bands = list(bands or DEFAULT_BANDS)
+    unknown = [b for b in bands if b not in ALL_BANDS]
+    if unknown:
+        raise ValueError(f"Unknown Sentinel-2 bands {unknown}; expected from {list(ALL_BANDS)}")
+    if not source.is_dir():
+        raise NotADirectoryError(f"Band source is not a directory: {source}")
 
     out: dict[str, np.ndarray] = {}
     for band in bands:
-        path = source / f"{band}.tif"
-        if not path.is_file():
-            path = source / f"{band.lower()}.tif"
-        if not path.is_file():
+        path = _band_file(source, band)
+        if path is None:
             raise FileNotFoundError(f"Missing band {band} in {source}")
         with rasterio.open(path) as src:
-            out[band] = src.read(1).astype(np.float32)
+            arr = src.read(1).astype(np.float32)
+        if scale:
+            arr = arr / np.float32(S2_REFLECTANCE_SCALE)
+        out[band] = arr
     return out
 
 
 def load_label_mask(pair: ImagePair) -> np.ndarray | None:
-    """Load pixel-level change mask (1=change, 0=no change)."""
-    path = pair.label_path
-    if path is None or not path.is_file():
-        path = pair.img1_dir.parent.parent / "cm" / "cm.png"
-    if not path.is_file():
+    """Load the binary change mask for a pair, or None when absent."""
+    if pair.label_path is None or not pair.label_path.is_file():
         return None
-    if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+    path = pair.label_path
+    if path.suffix.lower() == ".png":
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
@@ -254,46 +235,15 @@ def load_label_mask(pair: ImagePair) -> np.ndarray | None:
     return (arr > 0).astype(np.uint8)
 
 
-def print_download_instructions(out: Path | None = None) -> None:
-    """Print manual download steps for OSCD."""
-    out = Path(out or default_oscd_root())
-    print(
-        """
-OSCD dataset download (manual, one-time):
-
-1. Register at https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection
-2. Download and extract the dataset to:
-   """
-        + str(out.resolve())
-        + """
-
-Supported layouts:
-  <root>/<city>/pair/img1.png + img2.png   (IEEE Images zip — RGB previews)
-  <root>/<city>/imgs_1/B02.tif ... imgs_2/ ... cm/cm.tif   (full multispectral)
-  <root>/<city>/cm/cm.png                  (train/test label zips merged per city)
-
-IEEE provides three separate downloads:
-  1) Images zip (~489 MB) — may be RGB previews OR multispectral depending on archive version
-  2) Train Labels zip
-  3) Test Labels zip
-
-Split files: train.txt, test.txt at dataset root.
-"""
-    )
-
-
 def verify_layout(root: Path | None = None) -> tuple[bool, str]:
-    """Check if OSCD root has at least one valid pair."""
+    """Check that root looks like a usable OSCD tree."""
     root = Path(root or default_oscd_root())
-    pairs = discover_pairs(root) or list_pairs(root, "all")
+    if not root.is_dir():
+        return False, f"Missing OSCD root {root}. Run: satchangegate download-oscd"
+    pairs = discover_pairs(root)
     if not pairs:
-        return False, f"No OSCD pairs found under {root}"
-    p = pairs[0]
-    try:
-        load_bands(p.img1_dir, ["B02", "B04", "B08"])
-    except (FileNotFoundError, ValueError) as e:
-        return False, str(e)
-    labeled = sum(1 for pair in pairs if pair.label_path is not None)
-    layout_note = f"layout={p.layout}"
-    label_note = f"{labeled}/{len(pairs)} with pixel labels"
-    return True, f"Found {len(pairs)} pair(s); first: {p.pair_id} ({layout_note}; {label_note})"
+        return False, f"No OSCD pairs under {root}. Run: satchangegate download-oscd"
+    labelled = sum(1 for p in pairs if p.label_path is not None)
+    n_train = sum(1 for p in pairs if p.split == "train")
+    n_test = len(pairs) - n_train
+    return True, f"{len(pairs)} pairs ({n_train} train / {n_test} test), {labelled} labelled"

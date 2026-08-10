@@ -89,7 +89,9 @@ def prepare_negative_pair(
     if label is None:
         raise ValueError(f"No label mask for stable crop: {pair.pair_id}")
     if label.shape != next(iter(raw_t1.values())).shape:
-        label = cv2.resize(label, (raw_t1["B02"].shape[1], raw_t1["B02"].shape[0]), interpolation=cv2.INTER_NEAREST)
+        label = cv2.resize(
+            label, (raw_t1["B02"].shape[1], raw_t1["B02"].shape[0]), interpolation=cv2.INTER_NEAREST
+        )
 
     box = find_stable_crop_box(label, target_size=crop_size)
     if box is None:

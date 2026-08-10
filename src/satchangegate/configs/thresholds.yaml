@@ -1,0 +1,67 @@
+# SatChangeGate threshold configuration.
+#
+# This file overrides the defaults declared in satchangegate/config.py. Every key
+# is validated against the pydantic models there; an unknown key is an error
+# rather than a silently ignored typo.
+#
+# PROVENANCE — READ BEFORE QUOTING ANY NUMBER FROM THIS FILE.
+# The previous version of these thresholds was fitted by an exhaustive sweep of
+# 6,561 combinations against 11 labelled tiles, with no held-out set, on data
+# where NIR and SWIR were synthesised as fixed linear combinations of R/G/B.
+# In that regime "NDVI" and "NDWI" were both proportional to (green - red) and
+# NDBI was approximately -NDVI, so the four-index gate was one colour-contrast
+# threshold under four names. Those numbers do not transfer to real Sentinel-2
+# reflectance and are NOT reproduced here as tuned values.
+#
+# The values below are documented starting points in top-of-atmosphere
+# reflectance units. Refit them with:
+#     satchangegate tune --split train
+# and report on the disjoint test split only.
+
+masks:
+  cloud_brightness: 0.35
+  cloud_ndvi_max: 0.20
+  snow_ndsi_min: 0.40
+  snow_nir_min: 0.25
+  water_ndwi_min: 0.30
+  shadow_nir_max: 0.15
+  shadow_brightness_max: 0.12
+  shadow_search_radius_px: 30
+  cloud_probability_min: 0.40
+
+quality:
+  cloud_fraction_max: 0.25
+  min_valid_pixel_fraction: 0.50
+  min_quality_score: 0.30
+  registration_error_px_max: 1.5
+
+gate:
+  # Fitted by `satchangegate tune --split train` on 1351 tiles across the 14
+  # training cities, selecting on balanced accuracy. The 10 test cities were
+  # held out entirely. Out-of-sample result on those held-out cities:
+  #   precision 0.804 (95% CI 0.747-0.852), recall 0.513 (0.460-0.565),
+  #   specificity 0.772 (0.708-0.827), F1 0.626, balanced accuracy 0.643,
+  #   n=534 tiles (345 change / 189 no-change). Gate filters 64.6% pre-VLM.
+  background_sigma: 2.0
+  min_absolute_delta: 0.10
+  max_absolute_delta: 0.30
+  min_changed_area_percent: 2.0
+
+  ndvi_delta_mean_min: 0.02
+  ndbi_delta_mean_min: 0.02
+  ndwi_delta_mean_min: 0.15
+  ndvi_strong_min: 0.25
+  ndbi_strong_min: 0.25
+
+  ssim_no_change_min: 0.65
+  phash_no_change_max: 16
+
+  index_delta_small: 0.10
+  cva_magnitude_threshold: 0.24
+  cva_magnitude_mean_min: 0.28
+
+  min_component_size_px: 32
+  open_radius_px: 1
+
+bands: [B02, B03, B04, B08, B11, B12]
+rgb_bands: [B04, B03, B02]

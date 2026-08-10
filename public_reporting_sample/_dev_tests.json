@@ -1,0 +1,42 @@
+{
+  "city": "beirut",
+  "checks": [
+    {
+      "name": "identity",
+      "expected": "no_change, 0.00% area, SSIM 1.000",
+      "actual": "no_change, 0.00% area, SSIM 1.000",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "photometric",
+      "expected": "no_change",
+      "actual": "no_change",
+      "passed": true,
+      "detail": "global brightness/gamma shift must not read as physical change"
+    },
+    {
+      "name": "real_pair_differs",
+      "expected": "changed area > 0 and SSIM < 1",
+      "actual": "2.99% area, SSIM 0.655",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "tier0_assessed",
+      "expected": "masks assessed on 13-band input",
+      "actual": "assessed=True, cloud=0.0028",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "registration_measured",
+      "expected": "~3.0 px for a 3 px synthetic shift",
+      "actual": "3.00 px",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "n_checks": 5,
+  "n_passed": 5
+}

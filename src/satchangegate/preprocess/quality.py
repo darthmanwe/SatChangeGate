@@ -1,79 +1,127 @@
-"""Quality scoring schema (Tier 0 output)."""
+"""Pair-level observation quality.
+
+The previous score summed the fractions of *overlapping* masks
+(``cloud + shadow + snow + 0.5*water``) and multiplied by the valid fraction.
+That double-counted any pixel flagged by two masks, could exceed 1.0, and drove
+the score to a clipped 0 for scenes that were merely partly cloudy. Contamination
+is now computed as a genuine set union over the mask arrays.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from datetime import date
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from satchangegate.preprocess.align import bands_to_rgb
+from satchangegate.config import QualityThresholds
 from satchangegate.preprocess.masks import EphemeralMasks, combine_pair_masks
 
 
 class QualityScore(BaseModel):
+    """Observation quality for a bitemporal pair.
+
+    Fraction fields are ``None`` when masks could not be computed for the source
+    (see ``EphemeralMasks.assessed``). ``None`` means unknown, not zero.
+    """
+
+    masks_assessed: bool
+    cloud_fraction_max: float | None = None
+    snow_fraction_max: float | None = None
+    shadow_fraction_max: float | None = None
+    water_fraction_max: float | None = None
+    valid_fraction: float | None = None
+    quality_score: float | None = None
     valid_observation: bool
-    cloud_fraction: float
-    shadow_fraction: float
-    snow_fraction: float
-    water_fraction: float
-    registration_error_px: float = 0.0
-    illumination_delta: float
+    registration_error_px: float | None = None
     season_delta_days: int | None = None
-    quality_score: float
 
 
-def _illumination_delta(bands_t1: dict[str, np.ndarray], bands_t2: dict[str, np.ndarray]) -> float:
-    rgb1 = bands_to_rgb(bands_t1)
-    rgb2 = bands_to_rgb(bands_t2)
-    mean1 = float(rgb1.mean())
-    mean2 = float(rgb2.mean())
-    return abs(mean1 - mean2)
+def _parse_iso(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+def season_delta_days(date_t1: str | None, date_t2: str | None) -> int | None:
+    """Absolute day-of-year separation, folded to at most half a year.
+
+    Seasonality is the dominant confounder for a change gate: two images a year
+    apart share a season, two six months apart do not. This field was previously
+    hardcoded to None even though both dates were already parsed.
+    """
+    d1, d2 = _parse_iso(date_t1), _parse_iso(date_t2)
+    if d1 is None or d2 is None:
+        return None
+    delta = abs(d1.timetuple().tm_yday - d2.timetuple().tm_yday)
+    return int(min(delta, 365 - delta))
 
 
 def compute_quality_score(
     masks_t1: EphemeralMasks,
     masks_t2: EphemeralMasks,
-    bands_t1: dict[str, np.ndarray],
-    bands_t2: dict[str, np.ndarray],
-    cfg: dict[str, Any] | None = None,
-    registration_error_px: float = 0.0,
+    thresholds: QualityThresholds | None = None,
+    *,
+    registration_error_px: float | None = None,
+    date_t1: str | None = None,
+    date_t2: str | None = None,
+    combined: EphemeralMasks | None = None,
 ) -> QualityScore:
-    """Compute pair-level quality metrics."""
-    cfg = cfg or {}
-    qcfg = cfg.get("quality", {})
-    combined = combine_pair_masks(masks_t1, masks_t2)
+    """Score a pair's usability.
 
-    cloud_frac = max(masks_t1.cloud_fraction, masks_t2.cloud_fraction)
-    shadow_frac = max(masks_t1.shadow_fraction, masks_t2.shadow_fraction)
-    snow_frac = max(masks_t1.snow_fraction, masks_t2.snow_fraction)
-    water_frac = max(masks_t1.water_fraction, masks_t2.water_fraction)
-    valid_frac = combined.valid_fraction
-    illum = _illumination_delta(bands_t1, bands_t2)
+    ``combined`` may be passed to avoid recomputing the union, which the pipeline
+    already needs for the change mask.
+    """
+    thresholds = thresholds or QualityThresholds()
+    combined = combined if combined is not None else combine_pair_masks(masks_t1, masks_t2)
+    season = season_delta_days(date_t1, date_t2)
 
-    # Quality score: high valid fraction, low contamination
-    contam = cloud_frac + shadow_frac + snow_frac + water_frac * 0.5
-    score = float(np.clip(valid_frac * (1.0 - contam), 0.0, 1.0))
+    registration_ok = (
+        registration_error_px is None
+        or registration_error_px <= thresholds.registration_error_px_max
+    )
 
-    cloud_max = qcfg.get("cloud_fraction_max", 0.25)
-    min_valid = qcfg.get("min_valid_pixel_fraction", 0.5)
-    min_score = qcfg.get("min_quality_score", 0.3)
+    if not combined.assessed:
+        # Unknown quality. Do not block the pipeline, but never claim the scene
+        # is clean: fractions stay None and the report must say "not assessed".
+        return QualityScore(
+            masks_assessed=False,
+            valid_observation=registration_ok,
+            registration_error_px=registration_error_px,
+            season_delta_days=season,
+        )
 
-    valid_obs = (
-        cloud_frac <= cloud_max
-        and valid_frac >= min_valid
-        and score >= min_score
-        and registration_error_px <= cfg.get("gate", {}).get("registration_error_px_max", 1.5)
+    cloud = float(np.maximum(masks_t1.cloud, masks_t2.cloud).mean())
+    snow = float(np.maximum(masks_t1.snow, masks_t2.snow).mean())
+    shadow = float(np.maximum(masks_t1.shadow, masks_t2.shadow).mean())
+    water = float(np.maximum(masks_t1.water, masks_t2.water).mean())
+
+    valid_frac = float(combined.valid.mean())
+    # Set union, so a pixel flagged as both cloud and shadow is counted once.
+    contaminated = float((~combined.valid).mean())
+    score = float(np.clip(valid_frac * (1.0 - contaminated), 0.0, 1.0))
+
+    valid_observation = bool(
+        cloud <= thresholds.cloud_fraction_max
+        and valid_frac >= thresholds.min_valid_pixel_fraction
+        and score >= thresholds.min_quality_score
+        and registration_ok
     )
 
     return QualityScore(
-        valid_observation=valid_obs,
-        cloud_fraction=round(cloud_frac, 4),
-        shadow_fraction=round(shadow_frac, 4),
-        snow_fraction=round(snow_frac, 4),
-        water_fraction=round(water_frac, 4),
-        registration_error_px=registration_error_px,
-        illumination_delta=round(illum, 4),
-        season_delta_days=None,
+        masks_assessed=True,
+        cloud_fraction_max=round(cloud, 4),
+        snow_fraction_max=round(snow, 4),
+        shadow_fraction_max=round(shadow, 4),
+        water_fraction_max=round(water, 4),
+        valid_fraction=round(valid_frac, 4),
         quality_score=round(score, 4),
+        valid_observation=valid_observation,
+        registration_error_px=(
+            None if registration_error_px is None else round(registration_error_px, 3)
+        ),
+        season_delta_days=season,
     )

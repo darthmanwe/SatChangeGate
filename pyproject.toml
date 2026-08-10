@@ -4,43 +4,55 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "satchangegate"
-version = "0.1.0"
-description = "Preprocessing-first satellite temporal change detection PoC"
+version = "0.2.0"
+description = "Preprocessing-first satellite change detection with a cost-controlled VLM review funnel"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Kutlu" }]
+keywords = ["remote-sensing", "change-detection", "sentinel-2", "geospatial", "vlm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# Upper bounds are deliberate: numpy 2.0 changed the ABI for compiled
+# dependencies (rasterio, opencv, scikit-image), and the anthropic SDK moves
+# fast enough that an unbounded range makes the LLM path unreproducible.
 dependencies = [
-    "rasterio>=1.3",
-    "numpy>=1.24",
-    "scikit-image>=0.21",
-    "opencv-python-headless>=4.8",
-    "anthropic>=0.40",
-    "pydantic>=2.0",
-    "typer>=0.9",
-    "rich>=13.0",
-    "pyyaml>=6.0",
+    "numpy>=1.24,<3",
+    "rasterio>=1.3,<2",
+    "scikit-image>=0.21,<0.30",
+    "scipy>=1.10,<2",
+    "opencv-python-headless>=4.8,<6",
+    "anthropic>=0.69,<1",
+    "pydantic>=2.0,<3",
+    "typer>=0.9,<1",
+    "rich>=13.0,<15",
+    "pyyaml>=6.0,<7",
+    "huggingface_hub>=0.20,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
-    "ruff>=0.1",
+    "pytest-cov>=4.1",
+    "ruff>=0.6",
+    "mypy>=1.8",
+    "types-PyYAML",
 ]
-optimus = [
-    "huggingface_hub>=0.20",
-]
-goes = [
-    "goes2go>=2025.1",
-    "xarray>=2023.1",
-    "netCDF4>=1.6",
-    "h5py>=3.8",
-]
-data = [
-    "huggingface_hub>=0.20",
-    "goes2go>=2025.1",
-    "xarray>=2023.1",
-    "netCDF4>=1.6",
-    "h5py>=3.8",
-]
+goes = ["goes2go>=2025.1", "xarray>=2023.1", "netCDF4>=1.6", "h5py>=3.8"]
+
+[project.urls]
+Homepage = "https://github.com/darthmanwe/SatChangeGate"
+Repository = "https://github.com/darthmanwe/SatChangeGate"
+Issues = "https://github.com/darthmanwe/SatChangeGate/issues"
 
 [project.scripts]
 satchangegate = "satchangegate.cli:app"
@@ -48,16 +60,57 @@ satchangegate = "satchangegate.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+satchangegate = ["configs/*.yaml", "py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "oscd: requires OSCD dataset on disk",
-    "optimus: requires OPTIMUS metadata/sample tar",
-    "goes: requires goes2go and network for GOES download",
-    "e2e: end-to-end integration (may call external APIs)",
-    "vlm: requires ANTHROPIC_API_KEY for live VLM",
+# Safe by default. A bare `pytest` with a real key in .env previously made live,
+# billed API calls; opting in to spend is now explicit.
+addopts = [
+    "-m", "not (e2e or vlm or oscd)",
+    "--strict-markers",
+    "-ra",
 ]
+markers = [
+    "oscd: requires the OSCD dataset on disk",
+    "e2e: end-to-end integration (slow)",
+    "vlm: makes live, billed Anthropic API calls",
+]
+
+[tool.coverage.run]
+source = ["src/satchangegate"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "C4", "ARG"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # typer relies on function calls in argument defaults
+    "RUF012",  # pydantic/dataclass mutable defaults are validated
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+# No python_version pin: numpy's bundled stubs use 3.12 syntax, so mypy must
+# run under the interpreter it is checking against (CI pins 3.12 for this job).
+packages = ["satchangegate"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true

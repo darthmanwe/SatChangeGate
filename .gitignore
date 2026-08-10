@@ -7,19 +7,35 @@ dist/
 build/
 .venv/
 venv/
-.env
 
-# Data & outputs (repo root only — not src/satchangegate/data/)
+# Secrets — ignore every .env variant, keep the example
+.env*
+!.env.example
+
+# Data and generated artifacts (note: /data is root-anchored so the
+# src/satchangegate/data package is NOT ignored)
 /data/
+reports/
+outputs/
 *.tif
 *.tiff
 
-# IDE
+# ...but the committed test fixtures are .tif and MUST ship, or `make demo`
+# works only on the machine that generated them.
+!tests/fixtures/**
+
+# Tooling caches
 .idea/
 .vscode/
 .cursor/
-
-# Test artifacts
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 htmlcov/
+.coverage
+coverage.xml
+
+# OS
+.DS_Store
+Thumbs.db
+*.log

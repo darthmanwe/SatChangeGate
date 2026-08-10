@@ -1,69 +1,69 @@
-"""Shared pytest fixtures."""
+"""Shared fixtures.
+
+The test session deliberately does **not** load the developer's ``.env``. The
+previous conftest called ``load_thresholds()``, which loaded ``.env`` into
+``os.environ`` for every run — so a bare ``pytest`` on a machine with a real key
+could make live, billed API calls.
+"""
 
 from __future__ import annotations
+
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from satchangegate.config import load_thresholds
-from satchangegate.preprocess.masks import EphemeralMasks
+from satchangegate.config import Settings
+
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "mini_oscd"
+
+
+@pytest.fixture(autouse=True)
+def _no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guarantee no test can accidentally authenticate against the real API."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_VLM_MODEL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_LLM_MODEL", raising=False)
 
 
 @pytest.fixture
-def cfg():
-    return load_thresholds()
+def settings() -> Settings:
+    return Settings()
 
 
 @pytest.fixture
-def synthetic_bands_vegetation():
-    """Vegetation-like t1 bands."""
-    h, w = 64, 64
+def fixture_root() -> Path:
+    if not FIXTURE_ROOT.is_dir():
+        pytest.skip("fixtures missing; run python scripts/make_fixtures.py")
+    return FIXTURE_ROOT
+
+
+@pytest.fixture
+def oscd_root() -> Path:
+    root = Path(os.environ.get("SCG_OSCD_ROOT", "data/raw/oscd"))
+    if not (root / "splits.json").is_file():
+        pytest.skip("OSCD dataset not present; run satchangegate download-oscd")
+    return root
+
+
+def synthetic_bands(
+    *,
+    nir: float = 0.32,
+    red: float = 0.035,
+    green: float = 0.06,
+    blue: float = 0.03,
+    swir1: float = 0.15,
+    swir2: float = 0.07,
+    size: int = 64,
+) -> dict[str, np.ndarray]:
+    """Uniform reflectance patch with the six gate bands."""
+    full = lambda v: np.full((size, size), v, dtype=np.float32)  # noqa: E731
     return {
-        "B02": np.full((h, w), 0.05, dtype=np.float32),
-        "B03": np.full((h, w), 0.08, dtype=np.float32),
-        "B04": np.full((h, w), 0.06, dtype=np.float32),
-        "B08": np.full((h, w), 0.55, dtype=np.float32),
-        "B11": np.full((h, w), 0.12, dtype=np.float32),
-        "B12": np.full((h, w), 0.10, dtype=np.float32),
+        "B02": full(blue),
+        "B03": full(green),
+        "B04": full(red),
+        "B08": full(nir),
+        "B11": full(swir1),
+        "B12": full(swir2),
     }
-
-
-@pytest.fixture
-def synthetic_bands_bare():
-    """Built/bare surface t2."""
-    h, w = 64, 64
-    return {
-        "B02": np.full((h, w), 0.25, dtype=np.float32),
-        "B03": np.full((h, w), 0.22, dtype=np.float32),
-        "B04": np.full((h, w), 0.28, dtype=np.float32),
-        "B08": np.full((h, w), 0.18, dtype=np.float32),
-        "B11": np.full((h, w), 0.35, dtype=np.float32),
-        "B12": np.full((h, w), 0.30, dtype=np.float32),
-    }
-
-
-@pytest.fixture
-def synthetic_bands_cloudy():
-    """Very bright cloudy scene."""
-    h, w = 64, 64
-    return {
-        "B02": np.full((h, w), 0.85, dtype=np.float32),
-        "B03": np.full((h, w), 0.82, dtype=np.float32),
-        "B04": np.full((h, w), 0.80, dtype=np.float32),
-        "B08": np.full((h, w), 0.05, dtype=np.float32),
-        "B11": np.full((h, w), 0.10, dtype=np.float32),
-        "B12": np.full((h, w), 0.08, dtype=np.float32),
-    }
-
-
-@pytest.fixture
-def all_valid_mask():
-    h, w = 64, 64
-    valid = np.ones((h, w), dtype=bool)
-    return EphemeralMasks(
-        cloud=np.zeros((h, w), dtype=bool),
-        snow=np.zeros((h, w), dtype=bool),
-        water=np.zeros((h, w), dtype=bool),
-        shadow=np.zeros((h, w), dtype=bool),
-        valid=valid,
-    )

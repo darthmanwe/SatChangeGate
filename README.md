@@ -1,236 +1,187 @@
 # SatChangeGate
 
-Preprocessing-first satellite temporal change detection PoC.
+A cost-controlled review funnel for satellite change detection: cheap deterministic
+preprocessing and a classical gate filter the stream, and expensive vision-model
+review runs only on what survives.
 
-## Executive summary
-
-### The idea
-
-Organizations monitoring land, infrastructure, or insurance exposure from satellite imagery face a cost problem: **running a vision-language model (VLM) or human review on every image pair does not scale**. Most pairs are unchanged, cloudy, or differ only because of season, sun angle, or atmospheric effects—not because something on the ground changed.
-
-SatChangeGate is a **gated review pipeline**: cheap, deterministic preprocessing and a classical change gate filter the stream first; **expensive VLM and LLM steps run only on candidates** that survive that filter.
-
-### How it is envisioned
-
-The target operating model is a three-tier funnel:
+[![CI](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml/badge.svg)](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
 ```
 Every satellite pair
-    → Tier 0: quality + masks (cloud, snow, shadow, water)
-    → Tier 1: classical gate (SSIM, spectral deltas, change area)
-         ├─ no_change / low_quality  →  archive, no API spend
+    → Tier 0: quality — cloud/snow/shadow/water masks, co-registration
+    → Tier 1: classical gate — spectral indices, SSIM, pHash, change vector
+         ├─ no_change / low_quality  →  archived, no API spend
          └─ candidate_change         →  Tier 2: VLM verification
-                                      →  Tier 3: LLM analyst report (optional)
+                                      →  Tier 3: LLM analyst report
 ```
 
-**Design principles:**
+## Quickstart
 
-- **Preprocessing-first** — normalize, mask, and score quality before any model inference.
-- **Gate before VLM** — the classical layer exists to cut API cost and latency, not to replace final judgment.
-- **VLM as verifier, not detector** — the VLM receives a curated package (before/after RGB, heatmap, metadata) and classifies *real change vs artifact*, with artifact-risk fields.
-- **Human-in-the-loop by default** — outputs are analyst-ready; the system reduces volume, not accountability.
-
-Longer term, the same gate can front Sentinel-2 STAC feeds, operational AOIs, and batch monitoring jobs. This repo is the **proof that the funnel works on public benchmarks**, not the production platform.
-
-### The narrow slice (what this repo actually implements)
-
-This PoC deliberately scopes to a **single, reviewable path** so technical and risk leadership can evaluate the approach without a full geospatial platform build.
-
-| In scope (today) | Out of scope (deferred) |
-|------------------|-------------------------|
-| OSCD bitemporal pairs (24 RGB cities) | Global STAC / operational ingest |
-| OPTIMUS time series (sample tars 148, 425, 455) | Full 12 TB OPTIMUS corpus |
-| Classical gate with tuned thresholds | Deep change-detection models |
-| Anthropic VLM on **candidates only** | VLM on every pair |
-| Optional LLM markdown report | Streamlit / ops UI |
-| GOES ABI as **context metadata** (CONUS) | GOES-driven gate logic (planned) |
-| Eval harnesses + 100-pair E2E with live VLM | Production SLA, multi-tenant auth |
-
-**End-to-end path in one line:**
-
-OSCD / OPTIMUS pair → align / masks / quality → classical gate → [candidates] → VLM → LLM report
-
-### What we have shown so far
-
-- **Gate tuning** on labeled OPTIMUS tiles: F1 **0.93**, 100% change recall, ~27% of pairs filtered before VLM on that set.
-- **100-pair random E2E** (24 OSCD + 76 OPTIMUS, live VLM): **35%** filtered by gate; **64** VLM calls; **~27%** of all pairs surfaced as `real_change` vs naive review-everything.
-- **Cost narrative:** two-stage funnel reduces VLM spend; VLM further splits candidates into likely artifact vs real change.
-
-### What a CRO / CTO should still treat as open
-
-- OSCD inputs are RGB PNG previews—not full multispectral; gate recall on OSCD change pairs is ~46% in the E2E sample (conservative filter).
-- Labels and metrics are benchmark-specific; production AOIs need their own validation.
-- No production controls yet (audit logging, model versioning, rate limits, data residency) beyond PoC CLI and local reports.
-
-Detailed metrics, commands, and roadmap follow below.
-
-### Sample reports (representative outputs)
-
-Committed examples in [`public_reporting_sample/`](public_reporting_sample/) illustrate what the pipeline produces. They are **representative snapshots** from PoC runs. Full run artifacts stay under `data/reports/` (gitignored locally).
-
-| Sample | What it shows |
-|--------|----------------|
-| [`beirut.md`](public_reporting_sample/beirut.md) | End-to-end **LLM analyst report** for OSCD Beirut after classical gate + VLM (construction change, evidence sections) |
-| [`_optimus_eval_summary.md`](public_reporting_sample/_optimus_eval_summary.md) | **Gate-only eval** on labeled OPTIMUS tiles (group 148): metrics, confusion matrix, per-tile features |
-| [`_dev_tests_summary.json`](public_reporting_sample/_dev_tests_summary.json) | **Dev test battery** summary (negative controls + small OPTIMUS fixtures) |
-
----
-
-**Narrow slice (technical):** OSCD / OPTIMUS pairs → preprocessing + ephemeral masks → classical change gate → Anthropic VLM (candidates only) → Anthropic LLM markdown report.
-
-## Setup
+No dataset download and no API key required:
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate   # Windows
-pip install -e ".[dev,data]"
-copy .env.example .env   # set ANTHROPIC_API_KEY
+make setup
+make demo
 ```
 
-## Data layout (`data/raw/`, gitignored)
-
-| Path | Source |
-|------|--------|
-| `data/raw/oscd/` | IEEE OSCD images + merged labels (24 RGB pairs) |
-| `data/raw/optimus/` | OPTIMUS eval JSON, `index.json`, `images/{N}.tar`, extracted groups |
-| `data/raw/goes/` | GOES ABI NetCDF snapshots (weather context) |
-
-Reports and eval artifacts: `data/reports/` (gitignored).
-
-## OSCD data
+That runs the full funnel on committed synthetic fixtures. For the real
+benchmark (~513 MB, checksum-verified, no registration required):
 
 ```bash
-satchangegate download-oscd --out data/raw/oscd
+make data     # download 13-band Sentinel-2 OSCD
+make eval     # out-of-sample evaluation on held-out cities
 ```
 
-Download from [IEEE DataPort OSCD](https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection):
-
-1. **Images zip** — extract to `data/raw/oscd/` (`<city>/pair/img1.png`, `img2.png`)
-2. **Train Labels zip** — merge `<city>/cm/cm.png`
-3. **Test Labels zip** — same for test cities
-
-The common IEEE **Images zip** is RGB PNG previews, not per-band GeoTIFFs. Full MSI may require the [official OSCD site](https://rcdaudt.github.io/oscd/) or Sentinel-2 via Medusa.
-
-## OPTIMUS data
-
-Do **not** `git clone` the full Hugging Face repo (~12 TB). Tar files are `images/{group_index}.tar` (~25 GB each), resolved via `index.json`.
+Or with Docker, which avoids the GDAL/OpenCV install entirely:
 
 ```bash
-satchangegate download-optimus --metadata-only
-satchangegate download-optimus --with-index          # ~464 MB index.json
-satchangegate download-optimus --dev-fixture         # 2-frame tree from OSCD PNGs
-satchangegate download-optimus --allow-large-download --tile-id 4472_3910
+docker build -t satchangegate . && docker run --rm satchangegate --help
 ```
 
-OPTIMUS uses a separate loader (`src/satchangegate/data/optimus.py`) — monthly time series in numbered tars, not OSCD-style pair folders. Eval labels: **483 series** (286 no-change, 197 change) in `2024_dataset_evaluation.json`.
+## Results
+
+Measured on the **10 held-out OSCD cities**, which are never seen during
+threshold tuning. Disjointness between the tuning and evaluation splits is
+asserted at runtime, not assumed.
+
+| Metric | Value | 95% CI |
+|---|---|---|
+| Precision | **0.804** | 0.747 – 0.852 |
+| Recall | 0.513 | 0.460 – 0.565 |
+| Specificity | 0.772 | 0.708 – 0.827 |
+| F1 | 0.626 | — |
+| Balanced accuracy | 0.643 | — |
+
+n = 534 scored tiles (345 change / 189 no-change) from 621 total; 87 were
+rejected by Tier 0 quality checks and are reported separately rather than
+counted as negatives. Confusion matrix: TP 177 · FP 43 · FN 168 · TN 146.
+
+**The operating point is high precision, moderate recall.** The gate filters
+**64.6%** of tiles before any API call, and when it does flag something it is
+right about 80% of the time. It also misses about half of all change. For a
+spend-control layer in front of human or model review that is usually the right
+trade — but it is a trade, and it should be stated as one rather than buried.
+
+Reproduce: `make data && make tune && make eval`. Sample outputs are committed
+under [`public_reporting_sample/`](public_reporting_sample/).
+
+### What the funnel is worth
+
+`satchangegate e2e --split test --vlm --max-vlm-calls 20` runs the funnel with
+live verification and reports cost derived from the token usage the API actually
+returned — input/output tokens, dollars per pair, and the review-everything
+counterfactual. The committed sample is a gate-only run ($0.00), because
+publishing a cost figure that nobody can reproduce without a key is how the
+previous version of this README got into trouble.
+
+## What this is not
+
+Honest framing matters more here than a good-looking number, so:
+
+- **This is a triage gate, not a segmentation model.** At the pixel level it
+  reaches F1 ≈ 0.13, against roughly 0.50–0.60 for supervised deep models on
+  OSCD. It is not competitive with them and is not trying to be — it is a
+  ~10 ms/tile filter that decides whether to spend money.
+- **OSCD labels only *urban* change.** Seasonal, agricultural, and hydrological
+  change across a multi-year gap is spectrally enormous and labelled negative.
+  A magnitude-based detector keys on exactly the wrong signal; even directional
+  built-up features (NDBI up, NDVI down) separate the classes at only AUC ≈ 0.56
+  at tile level. This bounds how well *any* classical gate can score on this
+  benchmark, and it is why the numbers above are what they are.
+- **Cloud filtering rarely fires on OSCD**, because the dataset curators picked
+  clear scenes. What Tier 0 actually catches here is **co-registration failure**:
+  saclay_e (4.21 px) and saclay_w (2.04 px) exceed the 1.5 px tolerance and are
+  correctly withheld from the gate.
+- **Thresholds are dataset-specific.** They were fitted on 14 cities. Any new
+  AOI needs its own validation.
+
+## How it works
+
+**Tier 0 — quality.** Cloud, snow, and cloud-shadow masks from physically
+motivated tests on top-of-atmosphere reflectance, plus sub-pixel co-registration
+via phase cross-correlation. Water is *reported but not treated as
+contamination*: removing it would make flooding undetectable by construction.
+When a source lacks the bands to compute masks, quality is reported as
+`masks_assessed: false` with null fractions — unknown is represented as unknown,
+never as clean.
+
+**Tier 1 — the gate.** Per-pixel change magnitude from NDVI/NDBI (NDWI over
+water, where the land indices are undefined), thresholded against a robust
+per-scene background (`median + k·MAD`) with an absolute floor and ceiling, then
+despeckled by morphological opening and connected-component filtering. Tile-level
+features — signed index deltas, SSIM, perceptual hash, change-vector magnitude,
+changed area — feed one pure `decide()` function that returns a decision, a
+human-readable reason, and a calibrated confidence.
+
+Three design choices are load-bearing:
+
+- *Robust background, not a percentile.* A percentile cut assumes change is rare;
+  on a scene where 14% of pixels changed it lands inside the changed population
+  and suppresses exactly what it should detect.
+- *An absolute floor under the adaptive cut.* Without it, a scale-free threshold
+  always selects its top N% — so a pure illumination shift reads as change.
+- *Land indices are undefined over water.* Deep water has SWIR reflectance around
+  0.008, so a few thousandths of sensor noise swings NDBI across most of its
+  range and a static lake reads as violent change.
+
+Each of those was caught by a control that fails loudly rather than by inspection.
+
+**Tier 2 — VLM verification.** Candidates are packaged as before/after RGB plus a
+heatmap overlay and sent for an independent verdict, validated server-side
+against a Pydantic schema via structured outputs. The metadata the model sees is
+**redacted**: it carries acquisition dates and observation quality, and
+deliberately withholds the gate's verdict and every discriminative gate feature.
+The VLM is the gate's independent verifier; telling it the gate's answer would
+confound any agreement statistic between the two.
+
+**Tier 3 — analyst report.** Markdown from the structured evidence. Without an
+API key it degrades to a template that is explicitly labelled as such, and the
+result JSON records `llm_called` either way.
 
 ## Commands
 
 ```bash
-# Single OSCD pair (VLM/LLM if API key set and gate = candidate_change)
-satchangegate run --pair beirut --out data/reports
-
-# Negative controls
-satchangegate run --pair beirut --negative-mode identity|stable|photometric
-
-# OPTIMUS bitemporal (first/last frame)
-satchangegate run-optimus --tile-id 4472_3910
-
-# GOES ABI context (CONUS; metadata only today)
-satchangegate download-goes --when 2020-06-15T17:00:00Z
-satchangegate run --pair beirut --attach-goes
-
-# Evaluation
-satchangegate eval --split all
-satchangegate eval-optimus --group 148    # or 425
-satchangegate e2e-random --n 100 --seed 42   # mixed OSCD+OPTIMUS, live VLM
-
-# Dev batteries
-satchangegate dev-tests
-python scripts/run_dev_tests.py
-python scripts/run_e2e_random.py --n 100
-
-pytest
-pytest -m "not e2e"    # skip live VLM test
+satchangegate download-oscd          # fetch + verify the 13-band dataset
+satchangegate tiles                  # build the labelled tile index
+satchangegate run --pair beirut      # one city through the full funnel
+satchangegate tune --split train     # fit thresholds (test split held out)
+satchangegate eval --split test      # out-of-sample metrics with CIs
+satchangegate e2e --split test --vlm # funnel with measured cost
+satchangegate dev-tests              # offline control battery
+satchangegate verify                 # check dataset + config
 ```
 
-## Architecture
+Anything that can spend money defaults to not spending it; `--vlm` is opt-in and
+`--max-vlm-calls` is a hard cap.
 
+## Development
+
+```bash
+make lint type test    # ruff, mypy, 101 offline tests
+make cov               # coverage report
 ```
-Pair (OSCD | OPTIMUS) → align / masks / quality → classical gate
-    → [no_change | low_quality]  stop (no VLM)
-    → [candidate_change]         → VLM verify → LLM markdown report
-```
 
-## Findings (PoC validation)
+The test suite runs offline with no API key and no dataset: `pytest` deselects
+the `oscd`, `e2e`, and `vlm` markers by default, and a session fixture unsets
+`ANTHROPIC_API_KEY` so no test can authenticate by accident. CI runs lint, types,
+tests on Python 3.10–3.12 across Ubuntu and Windows, a wheel-install check that
+the packaged config resolves outside a source checkout, and a Docker build.
 
-### Classical gate tuning (OPTIMUS labeled tiles, groups 148 + 425)
+## Data
 
-Tuned on **11 labeled tiles** (real Sentinel-2 TCI, first vs last frame, no VLM):
+| Source | Role |
+|---|---|
+| OSCD (24 cities, 13-band Sentinel-2 L1C) | Primary. Auto-downloaded and checksum-verified from the [Hugging Face mirror](https://huggingface.co/datasets/hkristen/oscd). |
+| `tests/fixtures/mini_oscd` | Committed synthetic pairs so a clean clone runs end to end. |
+| OPTIMUS | Optional secondary track. RGB-only (TCI), so indices from it are flagged `rgb_only` and are not physically calibrated. |
 
-| Metric | Before | After tuning |
-|--------|--------|--------------|
-| F1 | 0.71 | **0.93** |
-| Recall (change) | 0.71 | **1.00** |
-| Specificity (no-change) | 0.50 | **0.75** |
-| Filtered before VLM | ~27% | **~27%** |
-
-Gate logic (`configs/thresholds.yaml`, `features/classical.py`):
-
-- Landcover-first spectral (NDVI/NDBI; NDWI only for water at high threshold)
-- Phenology guard for long-span false diffs (weak spectral + low SSIM)
-- High-area structural + moderate landcover paths for real change
-- One remaining FP on forest phenology (`4244_2805`) — diffuse vegetation shift vs persistent built change
-
-See `data/reports/_gate_tuning_report.md` after running eval.
-
-### 100-pair E2E with live VLM (`e2e-random`, seed 42)
-
-Stratified sample: **24 OSCD + 76 OPTIMUS** from a 6,024-pair pool. **99/100** completed (~9.5 min).
-
-| Stage | Result |
-|-------|--------|
-| Classical gate filtered | **35%** (no VLM) |
-| VLM calls | **64** |
-| VLM `real_change` | **27** (~27% of all pairs) |
-| VLM `likely_artifact` | **36** (~56% of candidates) |
-
-On labeled OSCD pairs in sample (all change-positive): gate precision **1.0**, recall **0.46** — gate is conservative (saves cost, misses some real changes on RGB PNGs).
-
-See `data/reports/_e2e_random_summary.md`.
-
-### Other eval highlights
-
-- **OSCD all split (24 pairs, gate only):** ~54% candidate, F1 0.70 vs 100% candidate baseline
-- **Negative controls:** identity + photometric pass; stable crop still sensitive on RGB previews
-- **GOES ABI:** fetch works for CONUS; attached as pipeline metadata, not yet used in gate decisions
-- **pytest:** 29 tests including mocked E2E; live VLM test marked `@pytest.mark.e2e`
-
-## Improvements in this phase
-
-| Area | What changed |
-|------|----------------|
-| **OPTIMUS** | Loader, index-based tar lookup, dev fixtures, `eval-optimus`, extract with completion marker |
-| **GOES** | `goes2go` integration, Windows-safe config bootstrap |
-| **Negative controls** | Identity / stable crop / photometric modes for OSCD |
-| **Gate** | Multi-rule decision engine tuned on OPTIMUS labels; `tune_gate.py` sweep helper |
-| **E2E eval** | `e2e_random_eval.py` — stratified random pairs across OSCD + OPTIMUS with live VLM |
-| **CLI** | `download-optimus`, `download-goes`, `dev-tests`, `eval-optimus`, `e2e-random` |
-| **Tests** | OPTIMUS, GOES, negative controls, E2E random (mocked + optional live) |
-
-## Future paths
-
-1. **Gate recall on OSCD** — radiometric harmonization before metrics; true MSI bands; spatial coherence of change mask (fix forest phenology FPs like `4244_2805`)
-2. **GOES in gate logic** — `low_quality` when ABI cloud fraction is high (CONUS AOIs)
-3. **Labeled OPTIMUS in E2E** — stratified random sample from 483 eval tiles; gate + VLM F1 on no-change vs change
-4. **LLM reports on E2E subset** — `--with-llm` on `e2e-random` for analyst markdown on `real_change` cases
-5. **Cost model** — $/pair for gate-only vs gate+VLM vs naive VLM-every-pair
-6. **Production deferred** — Sentinel-2 STAC, SpaceNet 7, deep models, Streamlit UI, global GOES coverage
-
-## Investor framing (summary)
-
-Two-stage funnel reduces expensive VLM review: **~35% filtered free** by classical gate, VLM only on candidates, VLM further separates artifacts from real change. In the 100-pair sample, **~27%** surfaced as high-confidence `real_change` vs reviewing everything. Position as a **cost-control and trust layer** for geospatial AI ops, not a replacement for human sign-off.
+The official train/test split is recovered from the label archives themselves and
+written to `splits.json`, rather than hardcoded.
 
 ## License
 
-OSCD, OPTIMUS, and downstream datasets have their own licenses. See dataset providers before commercial use.
+MIT — see [LICENSE](LICENSE). This covers the source code only; OSCD and any
+other imagery carry their own licenses, so check with the dataset providers
+before commercial use.

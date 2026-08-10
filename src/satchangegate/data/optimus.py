@@ -11,7 +11,7 @@ from typing import Literal
 import cv2
 import numpy as np
 
-from satchangegate.data.oscd import discover_pairs, load_bands
+from satchangegate.data.oscd import load_bands
 
 DEFAULT_BANDS = ["B02", "B03", "B04", "B08", "B11", "B12"]
 HF_REPO = "optimus-change/optimus-dataset"
@@ -43,9 +43,7 @@ def load_index(root: Path | None = None) -> list[dict[str, list[str]]]:
     root = Path(root or default_optimus_root())
     path = root / "index.json"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"Missing {path}. Run: satchangegate download-optimus --with-index"
-        )
+        raise FileNotFoundError(f"Missing {path}. Run: satchangegate download-optimus --with-index")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -102,7 +100,7 @@ def extract_group_tar(group_index: int, root: Path | None = None) -> Path:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "r:*") as tf:
-        tf.extractall(out_dir)  # noqa: S202
+        tf.extractall(out_dir)
     marker.write_text("ok", encoding="utf-8")
     return out_dir
 
@@ -237,7 +235,7 @@ def extract_tar_if_needed(tile_id: str, root: Path | None = None) -> Path:
     tar_path = download_optimus_tar(tile_id, root, allow_large_download=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "r:*") as tf:
-        tf.extractall(out_dir)  # noqa: S202 — trusted HF source
+        tf.extractall(out_dir)
     return out_dir
 
 
@@ -245,101 +243,6 @@ def _write_png(path: Path, rgb: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     cv2.imwrite(str(path), bgr)
-
-
-def create_optimus_dev_fixture(
-    tile_id: str,
-    *,
-    label: int | None = None,
-    oscd_pair_id: str = "beirut",
-    root: Path | None = None,
-) -> Path:
-    """
-    Build a 2-frame OPTIMUS-like tree from OSCD RGB PNGs (no HF tar download).
-
-    Label 0 (no change) uses the same frame at t1/t2; label 1 uses img1 vs img2.
-    """
-    root = Path(root or default_optimus_root())
-    pairs = discover_pairs()
-    match = [p for p in pairs if p.pair_id == oscd_pair_id]
-    if not match:
-        raise FileNotFoundError(f"OSCD pair {oscd_pair_id} required for dev fixture")
-    pair = match[0]
-
-    if label is None:
-        try:
-            label = load_eval_labels(root).get(tile_id, 0)
-        except FileNotFoundError:
-            label = 0
-
-    img1 = cv2.cvtColor(cv2.imread(str(pair.img1_dir)), cv2.COLOR_BGR2RGB)
-    img2 = cv2.cvtColor(cv2.imread(str(pair.img2_dir)), cv2.COLOR_BGR2RGB)
-    if img1 is None or img2 is None:
-        raise FileNotFoundError(f"Missing OSCD PNGs for {oscd_pair_id}")
-
-    img1 = cv2.resize(img1, (512, 512), interpolation=cv2.INTER_AREA)
-    img2 = cv2.resize(img2, (512, 512), interpolation=cv2.INTER_AREA)
-    t2_img = img1 if label == 0 else img2
-
-    try:
-        stamps = list_timestamps_from_index(tile_id, root)
-        t1_stamp, t2_stamp = stamps[0], stamps[-1]
-        group_index = resolve_group_index(tile_id, root)
-    except (FileNotFoundError, KeyError):
-        t1_stamp, t2_stamp = "2016-01", "2023-11"
-        group_index = "dev"
-
-    out_dir = root / "extracted" / str(group_index)
-    _write_png(out_dir / t1_stamp / "tci" / _tile_png_name(tile_id), img1)
-    _write_png(out_dir / t2_stamp / "tci" / _tile_png_name(tile_id), t2_img)
-    marker = root / "extracted" / ".dev_fixture"
-    marker.mkdir(parents=True, exist_ok=True)
-    (marker / f"{tile_id}.json").write_text(
-        json.dumps(
-            {
-                "tile_id": tile_id,
-                "label": label,
-                "oscd_pair": oscd_pair_id,
-                "t1": t1_stamp,
-                "t2": t2_stamp,
-                "group_index": group_index,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    return out_dir
-
-
-def ensure_optimus_dev_fixtures(
-    root: Path | None = None,
-    *,
-    no_change_tile: str = "4472_3910",
-    change_tile: str | None = None,
-    oscd_pair_id: str = "beirut",
-) -> None:
-    """Create dev fixtures for one no-change and one change eval tile if frames missing."""
-    root = Path(root or default_optimus_root())
-    labels = load_eval_labels(root)
-    if not _has_frame_files(no_change_tile, root):
-        create_optimus_dev_fixture(
-            no_change_tile,
-            label=0,
-            oscd_pair_id=oscd_pair_id,
-            root=root,
-        )
-    if change_tile is None:
-        for tid, lab in labels.items():
-            if lab == 1:
-                change_tile = tid
-                break
-    if change_tile and not _has_frame_files(change_tile, root):
-        create_optimus_dev_fixture(
-            change_tile,
-            label=1,
-            oscd_pair_id=oscd_pair_id,
-            root=root,
-        )
 
 
 def _has_frame_files(tile_id: str, root: Path) -> bool:
@@ -363,7 +266,9 @@ def list_timestamps_for_tile(tile_id: str, root: Path | None = None) -> list[str
     return sorted(set(stamps))
 
 
-def load_optimus_frame(tile_id: str, timestamp: str, root: Path | None = None) -> dict[str, np.ndarray]:
+def load_optimus_frame(
+    tile_id: str, timestamp: str, root: Path | None = None
+) -> dict[str, np.ndarray]:
     """Load one OPTIMUS RGB PNG as pseudo Sentinel-2 bands."""
     root = Path(root or default_optimus_root())
     name = _tile_png_name(tile_id)
@@ -385,8 +290,12 @@ def get_bitemporal_frames(
     root = Path(root or default_optimus_root())
     stamps = list_timestamps_for_tile(tile_id, root)
     if len(stamps) < 2:
-        ensure_optimus_dev_fixtures(root)
-        stamps = list_timestamps_for_tile(tile_id, root)
+        raise FileNotFoundError(
+            f"Tile {tile_id} has fewer than 2 extracted timestamps under {root}. "
+            "Earlier versions silently fabricated OPTIMUS frames from OSCD previews "
+            "here, so an 'OPTIMUS evaluation' could be an evaluation on duplicated "
+            "OSCD imagery with nothing in the output to say so."
+        )
     if len(stamps) < 2:
         raise ValueError(f"Need >=2 timestamps for {tile_id}, got {stamps}")
     t1, t2 = stamps[0], stamps[-1]
