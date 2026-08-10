@@ -58,7 +58,7 @@ jobs:
         run: |
           pip install --force-reinstall --no-deps .
           cd "$(mktemp -d)"
-          python -c "from satchangegate.config import get_settings; s=get_settings(); assert s.gate.adaptive_percentile; print('packaged config OK')"
+          python -c "from satchangegate.config import get_settings; s=get_settings(); assert s.gate.background_sigma > 0 and len(s.bands) == 6; print('packaged config OK')"
           satchangegate --version
 
   docker:
