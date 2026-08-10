@@ -69,17 +69,49 @@ under [`public_reporting_sample/`](public_reporting_sample/).
 
 ### What the funnel is worth
 
-`satchangegate e2e --split test --vlm --max-vlm-calls 20` runs the funnel with
-live verification and reports cost derived from the token usage the API actually
-returned — input/output tokens, dollars per pair, and the review-everything
-counterfactual. The committed sample is a gate-only run ($0.00), because
-publishing a cost figure that nobody can reproduce without a key is how the
-previous version of this README got into trouble.
+Measured on a live run — 150 test tiles, 20 verification calls, 0 errors,
+`claude-sonnet-5`, seed 42. Cost comes from the token usage the API returned,
+not from an estimate.
+
+| Stage | Count | Share |
+|---|---|---|
+| Input tiles | 150 | 100% |
+| Filtered by the classical gate | 98 | 65.3% |
+| Reached the VLM | 52 candidates (20 sampled) | 34.7% |
+
+**Spend:** $0.2706 actual (58,822 in / 6,278 out tokens, $0.0135 per call).
+Verifying all 52 candidates projects to $0.70, against $2.03 to review all 150 —
+a **65.3% reduction**, exactly the gate's filter rate.
+
+The second stage pays for itself on precision:
+
+| | Precision | 95% CI |
+|---|---|---|
+| Gate alone | 0.750 (15/20) | 0.531 – 0.888 |
+| **Gate + VLM** | **1.000 (12/12)** | 0.758 – 1.000 |
+
+The VLM rejected **all five** of the gate's false positives — as
+`likely_artifact` or `uncertain`, never confirming one — while retaining 12 of
+15 true changes (80%, CI 0.548 – 0.930). Every tile it confirmed as
+`real_change` was a genuine change.
+
+Read that as a direction, not a headline: at n=20 the interval on 12/12 runs
+from 0.758 to 1.0, and a single miss would move it visibly. What the sample
+does support is the architecture — a cheap gate that is wrong about a quarter
+of what it forwards, followed by a verifier that catches those errors for about
+1.4 cents each.
+
+Reproduce with `satchangegate e2e --split test --vlm --max-vlm-calls 20`.
+`--max-vlm-calls` caps spend, and the report labels a capped run and attributes
+the saving to the gate rather than to the cap.
 
 ## What this is not
 
 Honest framing matters more here than a good-looking number, so:
 
+- **The VLM numbers rest on 20 calls.** They show the second stage catching the
+  gate's errors, not a validated production rate. Widen the sample before
+  quoting them anywhere that matters.
 - **This is a triage gate, not a segmentation model.** At the pixel level it
   reaches F1 ≈ 0.13, against roughly 0.50–0.60 for supervised deep models on
   OSCD. It is not competitive with them and is not trying to be — it is a
@@ -135,6 +167,19 @@ against a Pydantic schema via structured outputs. The metadata the model sees is
 deliberately withholds the gate's verdict and every discriminative gate feature.
 The VLM is the gate's independent verifier; telling it the gate's answer would
 confound any agreement statistic between the two.
+
+Two details turned out to matter more than expected, both found by running the
+tier live rather than by reading the code:
+
+- *A tile is too small to send at native size.* A 64 px crop is a 640 m window;
+  the model could not resolve it and correctly answered `uncertain` at 0.30
+  confidence. Sending a 3× context window with the region of interest outlined,
+  upsampled to a 512 px long edge, moved the same tile to 0.55.
+- *The evidence has to be real.* The tile packager was passing placeholder dates
+  and a `masks_assessed: true` record with every fraction null — internally
+  contradictory, and a violation of this project's own unknown-is-not-clean
+  rule. It now carries the scene's actual dates, cloud/shadow/water fractions,
+  registration error, and seasonal separation.
 
 **Tier 3 — analyst report.** Markdown from the structured evidence. Without an
 API key it degrades to a template that is explicitly labelled as such, and the

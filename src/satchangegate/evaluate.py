@@ -41,7 +41,7 @@ from satchangegate.preprocess.align import (
     stretch_for_display,
 )
 from satchangegate.preprocess.masks import combine_pair_masks, compute_ephemeral_masks
-from satchangegate.preprocess.quality import compute_quality_score
+from satchangegate.preprocess.quality import QualityScore, compute_quality_score
 
 
 @dataclass
@@ -60,6 +60,9 @@ class SceneCache:
     registration_px: float
     scene_threshold: float | None
     water: np.ndarray
+    quality: QualityScore
+    date_t1: str
+    date_t2: str
 
 
 def build_scene_cache(pair, settings: Settings) -> SceneCache:
@@ -97,6 +100,9 @@ def build_scene_cache(pair, settings: Settings) -> SceneCache:
         valid_observation=quality.valid_observation,
         registration_px=registration_px,
         water=combined.water,
+        quality=quality,
+        date_t1=pair.date_t1 or "unknown",
+        date_t2=pair.date_t2 or "unknown",
         scene_threshold=scene_change_threshold(
             deltas, combined.valid, settings.gate, combined.water
         ),

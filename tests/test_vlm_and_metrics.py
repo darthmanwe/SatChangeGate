@@ -229,12 +229,24 @@ class TestUsageAndCost:
         assert rec.cost_usd == 0.0
 
     def test_funnel_reports_savings_against_review_everything(self) -> None:
-        cost = FunnelCost(n_pairs=100, n_gate_filtered=60, n_vlm_calls=40)
+        cost = FunnelCost(n_pairs=100, n_gate_filtered=60, n_candidates=40, n_vlm_calls=40)
         cost.vlm_cost_usd = 0.40
         cost.per_call_costs = [0.01] * 40
         out = cost.to_dict()
         assert out["gate_filtered_pct"] == 60.0
         assert out["counterfactual_review_everything_usd"] == pytest.approx(1.0)
+        assert out["savings_pct"] == pytest.approx(60.0)
+        assert out["vlm_budget_capped"] is False
+
+    def test_budget_cap_is_not_credited_to_the_gate(self) -> None:
+        """A truncated run must not report the cap as a gate saving."""
+        cost = FunnelCost(n_pairs=100, n_gate_filtered=60, n_candidates=40, n_vlm_calls=1)
+        cost.vlm_cost_usd = 0.01
+        cost.per_call_costs = [0.01]
+        out = cost.to_dict()
+        assert out["vlm_budget_capped"] is True
+        # 40 candidates x $0.01 = $0.40 projected, against $1.00 for all 100.
+        assert out["projected_cost_at_gate_rate_usd"] == pytest.approx(0.40)
         assert out["savings_pct"] == pytest.approx(60.0)
 
 

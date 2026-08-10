@@ -42,17 +42,42 @@ _QUALITY_ALLOWLIST = (
 )
 
 
+# Minimum long edge for any image sent to the vision model. A 64 px tile is a
+# 640 m window at Sentinel-2 resolution; sent at native size the model has
+# essentially nothing to look at and correctly answers "uncertain". Upsampling
+# adds no information, but it does let the model resolve the structure that is
+# present. Well under the model's resolution tier, so it costs few extra tokens.
+MIN_RENDER_PX = 512
+
+
+def _upscale(img_u8: np.ndarray, min_px: int = MIN_RENDER_PX) -> np.ndarray:
+    """Enlarge small crops so the model can resolve them; never downscale."""
+    h, w = img_u8.shape[:2]
+    longest = max(h, w)
+    if longest >= min_px:
+        return img_u8
+    scale = min_px / longest
+    return cv2.resize(
+        img_u8,
+        (max(1, round(w * scale)), max(1, round(h * scale))),
+        # Nearest keeps pixel boundaries crisp, so the model sees the actual
+        # sensor grid rather than interpolation smear.
+        interpolation=cv2.INTER_NEAREST,
+    )
+
+
 def _save_rgb(rgb_u8: np.ndarray, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2BGR))
+    cv2.imwrite(str(path), cv2.cvtColor(_upscale(rgb_u8), cv2.COLOR_RGB2BGR))
 
 
 def _save_overlay(rgb_u8: np.ndarray, heatmap: np.ndarray, path: Path) -> None:
     h = np.rint(np.clip(heatmap, 0, 1) * 255).astype(np.uint8)
     coloured = cv2.applyColorMap(h, cv2.COLORMAP_JET)
     base = cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2BGR)
+    blended = cv2.addWeighted(base, 0.6, coloured, 0.4, 0)
     path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), cv2.addWeighted(base, 0.6, coloured, 0.4, 0))
+    cv2.imwrite(str(path), _upscale(blended))
 
 
 def redacted_metadata(quality: QualityScore, classical: ClassicalResult) -> dict:

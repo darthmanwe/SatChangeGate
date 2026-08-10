@@ -159,7 +159,6 @@ def run_e2e(
 def _verify_tile(cache, tile, feats, settings, api_key, model, out_dir):
     """Package one tile and ask the VLM. Errors degrade, they do not raise."""
     from satchangegate.features.classical import ClassicalResult, compute_change_mask
-    from satchangegate.preprocess.quality import QualityScore
     from satchangegate.vlm.client import verify_candidate
 
     ys, xs = tile.slice_yx
@@ -174,12 +173,16 @@ def _verify_tile(cache, tile, feats, settings, api_key, model, out_dir):
     )
     package_dir = out_dir / "e2e_packages" / tile.tile_id
     try:
-        quality = QualityScore(masks_assessed=True, valid_observation=True)
         classical = ClassicalResult(
             tile_id=tile.tile_id,
             aoi_id=f"oscd_{tile.city}",
-            date_t1="t1",
-            date_t2="t2",
+            date_t1=cache.date_t1,
+            date_t2=cache.date_t2,
+            masks_assessed=cache.quality.masks_assessed,
+            cloud_fraction_max=cache.quality.cloud_fraction_max,
+            snow_fraction_max=cache.quality.snow_fraction_max,
+            registration_error_px=cache.quality.registration_error_px,
+            season_delta_days=cache.quality.season_delta_days,
             ssim=feats.ssim,
             phash_distance=feats.phash_distance,
             ndvi_delta_mean=feats.ndvi_delta_mean,
@@ -188,29 +191,71 @@ def _verify_tile(cache, tile, feats, settings, api_key, model, out_dir):
             changed_area_percent=feats.changed_area_percent,
             classical_gate="candidate_change",
         )
-        _write_tile_package(package_dir, cache, tile, mask, quality, classical)
+        _write_tile_package(package_dir, cache, tile, mask, cache.quality, classical)
         verdict, record = verify_candidate(package_dir, api_key=api_key, model=model)
         return verdict, record, None
     except Exception as exc:
         return None, None, f"{type(exc).__name__}: {exc}"
 
 
+# How much surrounding scene to include around the tile under evaluation.
+# A bare 64 px crop gives the model no reference for what "normal" looks like
+# in this scene, so it cannot tell a new building from an ordinary rooftop.
+CONTEXT_FACTOR = 3
+
+
+def _context_window(
+    tile, height: int, width: int
+) -> tuple[slice, slice, tuple[int, int, int, int]]:
+    """Expanded window around a tile, plus the tile's box within that window."""
+    th, tw = tile.y1 - tile.y0, tile.x1 - tile.x0
+    pad_y, pad_x = (th * (CONTEXT_FACTOR - 1)) // 2, (tw * (CONTEXT_FACTOR - 1)) // 2
+    y0, y1 = max(0, tile.y0 - pad_y), min(height, tile.y1 + pad_y)
+    x0, x1 = max(0, tile.x0 - pad_x), min(width, tile.x1 + pad_x)
+    box = (tile.y0 - y0, tile.x0 - x0, tile.y1 - y0, tile.x1 - x0)
+    return slice(y0, y1), slice(x0, x1), box
+
+
+def _draw_box(img_u8, box: tuple[int, int, int, int]):
+    """Outline the region under evaluation so the model knows where to look."""
+    import cv2
+
+    out = img_u8.copy()
+    y0, x0, y1, x1 = box
+    cv2.rectangle(out, (x0, y0), (x1 - 1, y1 - 1), (255, 255, 0), 1)
+    return out
+
+
 def _write_tile_package(package_dir, cache, tile, mask, quality, classical):
+    import numpy as np
+
     from satchangegate.features.classical import compute_heatmap
     from satchangegate.preprocess.align import rgb_to_uint8, stretch_for_display
     from satchangegate.vlm.package import _save_overlay, _save_rgb, redacted_metadata
 
+    h, w = cache.valid.shape
+    cys, cxs, box = _context_window(tile, h, w)
+
+    # The heatmap is computed on the tile only (that is what was scored), then
+    # placed inside the wider context frame so the marked box and the highlight
+    # correspond.
     ys, xs = tile.slice_yx
-    deltas = {k: v[ys, xs] for k, v in cache.deltas.items()}
-    heat = compute_heatmap(mask, deltas)
-    d1, d2 = stretch_for_display(cache.rgb1[ys, xs], cache.rgb2[ys, xs])
+    tile_heat = compute_heatmap(mask, {k: v[ys, xs] for k, v in cache.deltas.items()})
+    heat = np.zeros(cache.rgb1[cys, cxs].shape[:2], dtype=np.float32)
+    heat[box[0] : box[2], box[1] : box[3]] = tile_heat
+
+    d1, d2 = stretch_for_display(cache.rgb1[cys, cxs], cache.rgb2[cys, cxs])
     package_dir.mkdir(parents=True, exist_ok=True)
-    _save_rgb(rgb_to_uint8(d1), package_dir / "before_rgb.png")
-    _save_rgb(rgb_to_uint8(d2), package_dir / "after_rgb.png")
-    _save_overlay(rgb_to_uint8(d2), heat, package_dir / "change_overlay.png")
-    (package_dir / "metadata.json").write_text(
-        json.dumps(redacted_metadata(quality, classical), indent=2), encoding="utf-8"
+    _save_rgb(_draw_box(rgb_to_uint8(d1), box), package_dir / "before_rgb.png")
+    _save_rgb(_draw_box(rgb_to_uint8(d2), box), package_dir / "after_rgb.png")
+    _save_overlay(_draw_box(rgb_to_uint8(d2), box), heat, package_dir / "change_overlay.png")
+
+    meta = redacted_metadata(quality, classical)
+    meta["region_of_interest"] = (
+        "Judge only the area inside the cyan box; the surrounding scene is "
+        "context for what is normal here."
     )
+    (package_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 def _summarise(
@@ -228,6 +273,7 @@ def _summarise(
     cost.n_pairs = len(rows)
     cost.n_vlm_calls = sum(1 for r in rows if r["vlm_called"])
     cost.n_gate_filtered = sum(1 for r in rows if r["gate"] != "candidate_change")
+    cost.n_candidates = sum(1 for r in rows if r["gate"] == "candidate_change")
 
     verdicts: dict[str, int] = {}
     for r in rows:
@@ -267,10 +313,21 @@ def _render(s: dict[str, Any]) -> str:
         "",
         "## Cost (measured from API token usage)",
         "",
-        f"- Total: **${c['cost_usd']['total']}**  ({c['input_tokens']} in / {c['output_tokens']} out tokens)",
-        f"- Per pair: ${c['cost_usd']['per_pair']}",
+        f"- Actually spent: **${c['cost_usd']['total']}** "
+        f"({c['input_tokens']} in / {c['output_tokens']} out tokens, "
+        f"{c['n_vlm_calls']} calls at ${c['cost_usd']['mean_per_vlm_call']} each)",
+        f"- Projected for all {c['n_candidates']} gate candidates: "
+        f"${c['projected_cost_at_gate_rate_usd']}",
         f"- Review-everything counterfactual: ${c['counterfactual_review_everything_usd']}",
-        f"- Saving: ${c['savings_vs_review_everything_usd']} ({c['savings_pct']}%)",
+        f"- Saving attributable to the gate: "
+        f"${c['savings_vs_review_everything_usd']} ({c['savings_pct']}%)",
+        "",
+        (
+            "> This run was budget-capped, so actual spend is lower than the "
+            "projection. The saving above is attributed to the gate only."
+            if c["vlm_budget_capped"]
+            else ""
+        ),
         "",
         "## Gate quality",
         "",

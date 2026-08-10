@@ -1,0 +1,225 @@
+{
+  "note": "Live run, claude-sonnet-5, seed 42, 20 verification calls, 0 errors.",
+  "calls": [
+    {
+      "tile_id": "brasilia_r5c0",
+      "city": "brasilia",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4514,
+      "vlm_verdict": "likely_artifact",
+      "vlm_change_type": "weather_artifact",
+      "vlm_confidence": 0.62,
+      "cost_usd": 0.013719
+    },
+    {
+      "tile_id": "chongqing_r0c6",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4873,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.72,
+      "cost_usd": 0.01131
+    },
+    {
+      "tile_id": "chongqing_r10c0",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.503,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.72,
+      "cost_usd": 0.012558
+    },
+    {
+      "tile_id": "chongqing_r1c1",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.5377,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "vegetation_clearing",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.012831
+    },
+    {
+      "tile_id": "chongqing_r1c4",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4374,
+      "vlm_verdict": "uncertain",
+      "vlm_change_type": "uncertain",
+      "vlm_confidence": 0.35,
+      "cost_usd": 0.012366
+    },
+    {
+      "tile_id": "chongqing_r2c4",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.3912,
+      "vlm_verdict": "uncertain",
+      "vlm_change_type": "uncertain",
+      "vlm_confidence": 0.4,
+      "cost_usd": 0.013041
+    },
+    {
+      "tile_id": "chongqing_r3c2",
+      "city": "chongqing",
+      "label": 0,
+      "gate": "candidate_change",
+      "gate_confidence": 0.3226,
+      "vlm_verdict": "uncertain",
+      "vlm_change_type": "no_meaningful_change",
+      "vlm_confidence": 0.55,
+      "cost_usd": 0.013146
+    },
+    {
+      "tile_id": "chongqing_r4c3",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.5246,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "vegetation_clearing",
+      "vlm_confidence": 0.82,
+      "cost_usd": 0.013566
+    },
+    {
+      "tile_id": "chongqing_r4c4",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.5492,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "vegetation_clearing",
+      "vlm_confidence": 0.82,
+      "cost_usd": 0.013116
+    },
+    {
+      "tile_id": "chongqing_r5c5",
+      "city": "chongqing",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4519,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.012291
+    },
+    {
+      "tile_id": "chongqing_r6c3",
+      "city": "chongqing",
+      "label": 0,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4011,
+      "vlm_verdict": "uncertain",
+      "vlm_change_type": "uncertain",
+      "vlm_confidence": 0.42,
+      "cost_usd": 0.013236
+    },
+    {
+      "tile_id": "chongqing_r7c3",
+      "city": "chongqing",
+      "label": 0,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4669,
+      "vlm_verdict": "likely_artifact",
+      "vlm_change_type": "vegetation_regrowth",
+      "vlm_confidence": 0.62,
+      "cost_usd": 0.013566
+    },
+    {
+      "tile_id": "chongqing_r8c4",
+      "city": "chongqing",
+      "label": 0,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4796,
+      "vlm_verdict": "uncertain",
+      "vlm_change_type": "uncertain",
+      "vlm_confidence": 0.4,
+      "cost_usd": 0.014286
+    },
+    {
+      "tile_id": "dubai_r10c2",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.2929,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.9,
+      "cost_usd": 0.012018
+    },
+    {
+      "tile_id": "dubai_r11c0",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4156,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.011847
+    },
+    {
+      "tile_id": "dubai_r2c7",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4418,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.012468
+    },
+    {
+      "tile_id": "dubai_r2c8",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4846,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "vegetation_regrowth",
+      "vlm_confidence": 0.62,
+      "cost_usd": 0.025092
+    },
+    {
+      "tile_id": "dubai_r7c1",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4619,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.013833
+    },
+    {
+      "tile_id": "dubai_r8c7",
+      "city": "dubai",
+      "label": 1,
+      "gate": "candidate_change",
+      "gate_confidence": 0.3422,
+      "vlm_verdict": "real_change",
+      "vlm_change_type": "construction",
+      "vlm_confidence": 0.78,
+      "cost_usd": 0.012798
+    },
+    {
+      "tile_id": "dubai_r9c1",
+      "city": "dubai",
+      "label": 0,
+      "gate": "candidate_change",
+      "gate_confidence": 0.4593,
+      "vlm_verdict": "likely_artifact",
+      "vlm_change_type": "no_meaningful_change",
+      "vlm_confidence": 0.72,
+      "cost_usd": 0.013548
+    }
+  ]
+}

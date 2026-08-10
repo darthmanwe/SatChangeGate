@@ -170,6 +170,7 @@ class FunnelCost:
 
     n_pairs: int = 0
     n_gate_filtered: int = 0
+    n_candidates: int = 0
     n_vlm_calls: int = 0
     n_errors: int = 0
     vlm_cost_usd: float = 0.0
@@ -190,6 +191,9 @@ class FunnelCost:
         n = self.n_pairs or 1
         naive = self.mean_cost_per_vlm_call * self.n_pairs
         actual = self.total_cost_usd
+        # What the funnel would cost if every gate candidate were verified,
+        # rather than only the ones a budget cap allowed through.
+        projected = self.mean_cost_per_vlm_call * self.n_candidates
         return {
             "n_pairs": self.n_pairs,
             "n_errors": self.n_errors,
@@ -207,6 +211,13 @@ class FunnelCost:
                 "mean_per_vlm_call": round(self.mean_cost_per_vlm_call, 6),
             },
             "counterfactual_review_everything_usd": round(naive, 4),
-            "savings_vs_review_everything_usd": round(max(0.0, naive - actual), 4),
-            "savings_pct": round(100.0 * (1 - actual / naive), 2) if naive > 0 else 0.0,
+            # Attributable to the gate only. Spend actually incurred can be far
+            # lower than this because of --max-vlm-calls, but a budget cap is a
+            # truncated experiment, not a saving: crediting it to the gate would
+            # report "97.5% saved" for a run that simply stopped early.
+            "projected_cost_at_gate_rate_usd": round(projected, 4),
+            "savings_vs_review_everything_usd": round(max(0.0, naive - projected), 4),
+            "savings_pct": (round(100.0 * (1 - projected / naive), 2) if naive > 0 else 0.0),
+            "vlm_budget_capped": self.n_vlm_calls < self.n_candidates,
+            "n_candidates": self.n_candidates,
         }
