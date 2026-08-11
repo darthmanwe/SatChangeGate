@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "revamp/**"]
+    # Any branch: a push that CI never sees is a push with no signal, and
+    # the previous [main, "revamp/**"] list silently skipped feature branches.
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 

@@ -1,30 +1,31 @@
 # End-to-end funnel — `test` split
 
-150 tiles, seed 42.
+621 tiles, seed 42.
 
 ## Funnel
 
 | Stage | Count | Share |
 |---|---|---|
-| Input | 150 | 100% |
-| Filtered by classical gate | 98 | 65.33% |
-| Sent to VLM | 20 | 13.33% |
+| Input | 621 | 100% |
+| Filtered by classical gate | 401 | 64.57% |
+| Sent to VLM | 100 | 16.1% |
 
 ## Cost (measured from API token usage)
 
-- Actually spent: **$0.2706** (58822 in / 6278 out tokens, 20 calls at $0.013532 each)
-- Projected for all 52 gate candidates: $0.7037
-- Review-everything counterfactual: $2.0298
-- Saving attributable to the gate: $1.3261 (65.33%)
+
+- Actually spent: **$1.2941** (290826 in / 28107 out tokens, 100 calls at $0.012941 each)
+- Projected for all 220 gate candidates: $2.847
+- Review-everything counterfactual: $8.0363
+- Saving attributable to the gate: $5.1893 (64.57%)
 
 > This run was budget-capped, so actual spend is lower than the projection. The saving above is attributed to the gate only.
 
 ## Gate quality
 
-n=133 (76 change / 57 no-change). Recall 0.474, precision 0.692, specificity 0.719, F1 0.562.
+n=534 (345 change / 189 no-change). Recall 0.513, precision 0.804, specificity 0.772, F1 0.626.
 
 ## VLM verdicts
 
-- likely_artifact: 3
-- real_change: 12
-- uncertain: 5
+- likely_artifact: 10
+- real_change: 68
+- uncertain: 22

@@ -323,3 +323,34 @@ class TestE2E:
         # Resuming must not duplicate completed work.
         second = run_e2e(fixture_root, tmp_path, config=cfg, resume=True)
         assert second["n"] == first["n"]
+
+
+class TestBaselines:
+    """The learned comparison must stay honest about leakage and features."""
+
+    def test_features_match_what_the_gate_consumes(self) -> None:
+        """Neither side may have an information advantage."""
+        from satchangegate.baseline import FEATURE_NAMES
+        from satchangegate.features.classical import GateFeatures
+
+        gate_inputs = set(GateFeatures.model_fields) - {"valid_observation"}
+        assert set(FEATURE_NAMES) == gate_inputs
+
+    def test_feature_matrix_shape_and_labels(self) -> None:
+        from satchangegate.baseline import FEATURE_NAMES, feature_matrix
+
+        rows = [dict.fromkeys(FEATURE_NAMES, 0.5) | {"label": 1} for _ in range(4)]
+        x, y = feature_matrix(rows)
+        assert x.shape == (4, len(FEATURE_NAMES))
+        assert y.tolist() == [1, 1, 1, 1]
+
+    def test_precision_at_recall_picks_the_best_viable_point(self) -> None:
+        import numpy as np
+
+        from satchangegate.baseline import _precision_at_recall
+
+        precisions = np.array([0.9, 0.7, 0.5])
+        recalls = np.array([0.2, 0.6, 0.9])
+        assert _precision_at_recall(precisions, recalls, 0.5) == pytest.approx(0.7)
+        # No point reaches this recall, so nothing is achievable.
+        assert _precision_at_recall(precisions, recalls, 0.99) == 0.0

@@ -1,4 +1,4 @@
-.PHONY: help setup lint format type test test-all cov data demo tune eval e2e controls docker docker-demo clean
+.PHONY: help setup lint format type test test-all cov data demo tune eval e2e baselines figures controls docker docker-demo clean
 
 PY ?= python
 VENV ?= .venv
@@ -53,6 +53,12 @@ ifdef VLM
 else
 	$(BIN)/satchangegate e2e --split test --no-vlm
 endif
+
+baselines: ## Compare the rule gate against learned models (needs .[baseline])
+	$(BIN)/satchangegate baselines
+
+figures: ## Regenerate the README figures
+	$(BIN)/python scripts/make_figures.py
 
 controls: ## Offline control battery
 	$(BIN)/satchangegate dev-tests
