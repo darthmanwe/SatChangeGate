@@ -8,14 +8,7 @@ review runs only on what survives.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
-```
-Every satellite pair
-    → Tier 0: quality — cloud/snow/shadow/water masks, co-registration
-    → Tier 1: classical gate — spectral indices, SSIM, pHash, change vector
-         ├─ no_change / low_quality  →  archived, no API spend
-         └─ candidate_change         →  Tier 2: VLM verification
-                                      →  Tier 3: LLM analyst report
-```
+![Gated review funnel](docs/figures/funnel.png)
 
 ## Quickstart
 
@@ -64,44 +57,82 @@ right about 80% of the time. It also misses about half of all change. For a
 spend-control layer in front of human or model review that is usually the right
 trade — but it is a trade, and it should be stated as one rather than buried.
 
+![Detection on a held-out city](docs/figures/detection_lasvegas.png)
+
+Las Vegas, a held-out test city. The detection panel is the despeckled change
+mask; comparing it against ground truth shows the shape of the trade — the
+flagged regions are largely real, and a good deal of real change is not flagged.
+
 Reproduce: `make data && make tune && make eval`. Sample outputs are committed
 under [`public_reporting_sample/`](public_reporting_sample/).
 
+### Is a hand-written gate the right choice?
+
+The gate is three rules over eleven numeric features. The obvious question is
+why those features are not simply handed to a classifier, so the repo answers it
+rather than leaving it open — same features, same split, same leakage assertion:
+
+| Model | Average precision | ROC AUC | Precision @ the gate's recall |
+|---|---|---|---|
+| Rule gate (confidence swept) | 0.719 | 0.728 | 0.784 |
+| Logistic regression | 0.802 | 0.747 | 0.787 |
+| **Gradient boosting** | **0.861** | **0.805** | **0.877** |
+
+**Gradient boosting wins, clearly** — +0.14 average precision over the rules, and
++7 points of precision at the same recall. That is the honest result, and it is
+reported rather than buried.
+
+The rules remain the default anyway, for reasons worth stating plainly: they are
+inspectable (every decision returns the rule that fired), they add no runtime
+dependency, and there is no model artifact to version, retrain, or drift. For a
+spend-control filter those properties are worth real money. The measured price of
+that choice is the 0.14 AP above — run `satchangegate baselines` to reproduce it,
+and swap in the learned scorer if your deployment values accuracy over
+inspectability.
+
+![Precision-recall curves](docs/figures/pr_curves.png)
+
+The curve is the more useful artifact than any single number, because a
+cost-control gate is chosen by its operating point. Two things it shows that a
+headline metric hides: the gate has genuine signal in the high-precision regime,
+and **above roughly 0.8 recall no method here beats chance** — if you need to
+catch nearly all change on this benchmark, a classical gate is the wrong tool.
+
 ### What the funnel is worth
 
-Measured on a live run — 150 test tiles, 20 verification calls, 0 errors,
-`claude-sonnet-5`, seed 42. Cost comes from the token usage the API returned,
-not from an estimate.
+Measured on a live run over the full held-out split — 621 tiles, **100
+verification calls, 0 errors**, `claude-sonnet-5`, seed 42. Cost comes from the
+token usage the API returned, not from an estimate.
 
 | Stage | Count | Share |
 |---|---|---|
-| Input tiles | 150 | 100% |
-| Filtered by the classical gate | 98 | 65.3% |
-| Reached the VLM | 52 candidates (20 sampled) | 34.7% |
+| Input tiles | 621 | 100% |
+| Filtered by the classical gate | 401 | 64.6% |
+| Reached the VLM | 220 candidates (100 sampled) | 35.4% |
 
-**Spend:** $0.2706 actual (58,822 in / 6,278 out tokens, $0.0135 per call).
-Verifying all 52 candidates projects to $0.70, against $2.03 to review all 150 —
-a **65.3% reduction**, exactly the gate's filter rate.
+**Spend:** $1.2941 actual, $0.0129 per verification. Verifying all 220
+candidates projects to $2.84, against $8.04 to review all 621 — a **64.6%
+reduction**, exactly the gate's filter rate.
 
 The second stage pays for itself on precision:
 
 | | Precision | 95% CI |
 |---|---|---|
-| Gate alone | 0.750 (15/20) | 0.531 – 0.888 |
-| **Gate + VLM** | **1.000 (12/12)** | 0.758 – 1.000 |
+| Gate alone | 0.870 (87/100) | 0.790 – 0.922 |
+| **Gate + VLM** | **0.971 (66/68)** | 0.899 – 0.992 |
 
-The VLM rejected **all five** of the gate's false positives — as
-`likely_artifact` or `uncertain`, never confirming one — while retaining 12 of
-15 true changes (80%, CI 0.548 – 0.930). Every tile it confirmed as
-`real_change` was a genuine change.
+The VLM rejected 11 of the 13 tiles the gate forwarded in error (0.846, CI
+0.578 – 0.957) while retaining 66 of 87 true changes (0.759, CI 0.659 – 0.836).
+It also labels what it sees: 43 construction, 23 vegetation clearing, 3 weather
+artifact, 1 flooding.
 
-Read that as a direction, not a headline: at n=20 the interval on 12/12 runs
-from 0.758 to 1.0, and a single miss would move it visibly. What the sample
-does support is the architecture — a cheap gate that is wrong about a quarter
-of what it forwards, followed by a verifier that catches those errors for about
-1.4 cents each.
+**An earlier 20-call sample of this same run reported 1.000 (12/12) precision
+and a perfect 5/5 rejection rate.** Both were small-sample luck, and both
+regressed once n reached 100 — which is the entire reason this README quotes
+intervals rather than point estimates. The architecture claim survives the
+larger sample; the perfect scores did not.
 
-Reproduce with `satchangegate e2e --split test --vlm --max-vlm-calls 20`.
+Reproduce with `satchangegate e2e --split test --vlm --max-vlm-calls 100`.
 `--max-vlm-calls` caps spend across resumes, the report labels a capped run and
 attributes the saving to the gate rather than to the cap, and a model with no
 published rate is flagged rather than silently costed at $0.00.
@@ -110,19 +141,20 @@ published rate is flagged rather than silently costed at $0.00.
 
 Honest framing matters more here than a good-looking number, so:
 
-- **The VLM numbers rest on 20 calls.** They show the second stage catching the
-  gate's errors, not a validated production rate. Widen the sample before
-  quoting them anywhere that matters.
+- **The VLM numbers rest on 100 calls from one split.** Enough for the intervals
+  quoted, not enough to be a production SLA, and all from a single benchmark.
 - **This is a triage gate, not a segmentation model.** At the pixel level it
   reaches F1 ≈ 0.13, against roughly 0.50–0.60 for supervised deep models on
   OSCD. It is not competitive with them and is not trying to be — it is a
   ~10 ms/tile filter that decides whether to spend money.
 - **OSCD labels only *urban* change.** Seasonal, agricultural, and hydrological
-  change across a multi-year gap is spectrally enormous and labelled negative.
-  A magnitude-based detector keys on exactly the wrong signal; even directional
-  built-up features (NDBI up, NDVI down) separate the classes at only AUC ≈ 0.56
-  at tile level. This bounds how well *any* classical gate can score on this
-  benchmark, and it is why the numbers above are what they are.
+  change across a multi-year gap is spectrally enormous and labelled negative, so
+  a magnitude-based detector keys on the wrong signal. No single feature
+  separates the classes — the best directional one (NDBI up, NDVI down) reaches
+  only AUC ≈ 0.56. What the baseline comparison shows is that this is a *feature
+  combination* problem rather than a dead end: the same eleven features reach ROC
+  AUC 0.805 once a gradient-boosted model is allowed to combine them. The rules
+  leave that on the table, which is the honest reading of the table above.
 - **Cloud filtering rarely fires on OSCD**, because the dataset curators picked
   clear scenes. What Tier 0 actually catches here is **co-registration failure**:
   saclay_e (4.21 px) and saclay_w (2.04 px) exceed the 1.5 px tolerance and are
@@ -195,6 +227,7 @@ satchangegate run --pair beirut      # one city through the full funnel
 satchangegate tune --split train     # fit thresholds (test split held out)
 satchangegate eval --split test      # out-of-sample metrics with CIs
 satchangegate e2e --split test --vlm # funnel with measured cost
+satchangegate baselines              # rule gate vs learned models
 satchangegate dev-tests              # offline control battery
 satchangegate verify                 # check dataset + config
 ```
@@ -205,8 +238,10 @@ Anything that can spend money defaults to not spending it; `--vlm` is opt-in and
 ## Development
 
 ```bash
-make lint type test    # ruff, mypy, 109 offline tests
+make lint type test    # ruff, mypy, 112 offline tests
 make cov               # coverage report
+make baselines         # rule gate vs learned models (needs .[baseline])
+make figures           # regenerate the README figures
 ```
 
 The test suite runs offline with no API key and no dataset: `pytest` deselects
@@ -219,7 +254,7 @@ the packaged config resolves outside a source checkout, and a Docker build.
 
 | Source | Role |
 |---|---|
-| OSCD (24 cities, 13-band Sentinel-2 L1C) | Primary. Auto-downloaded and checksum-verified from the [Hugging Face mirror](https://huggingface.co/datasets/hkristen/oscd). |
+| OSCD (24 cities, 13-band Sentinel-2 L1C) | Primary. Auto-downloaded and checksum-verified from the [Hugging Face mirror](https://huggingface.co/datasets/hkristen/oscd). Imagery in the figures above is rendered from it; the dataset is open-access and is not redistributed here. |
 | `tests/fixtures/mini_oscd` | Committed synthetic pairs so a clean clone runs end to end. |
 | OPTIMUS | Optional secondary track. RGB-only (TCI), so indices from it are flagged `rgb_only` and are not physically calibrated. |
 

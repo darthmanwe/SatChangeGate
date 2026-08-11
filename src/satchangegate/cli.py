@@ -253,6 +253,37 @@ def e2e_cmd(
     )
 
 
+@app.command("baselines")
+def baselines_cmd(
+    root: Path = typer.Option(default_oscd_root(), "--root"),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+) -> None:
+    """Compare the rule gate against learned models on the same features/split."""
+    try:
+        from satchangegate.baseline import run_baselines
+    except ImportError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    summary = run_baselines(root, out)
+    op = summary["shipped_gate_operating_point"]
+    table = Table(
+        title=f"Held-out cities (n={summary['n_test']}, "
+        f"chance precision {summary['positive_prevalence_test']:.3f})"
+    )
+    for col in ("model", "avg precision", "ROC AUC", f"precision @ recall {op['recall']:.2f}"):
+        table.add_column(col)
+    for m in summary["models"]:
+        table.add_row(
+            m["name"],
+            f"{m['average_precision']:.3f}",
+            f"{m['roc_auc']:.3f}",
+            f"{m['precision_at_gate_recall']:.3f}",
+        )
+    console.print(table)
+    console.print(f"[dim]Report: {out / '_baselines.md'} · curve: {out / 'pr_curves.png'}[/dim]")
+
+
 @app.command("dev-tests")
 def dev_tests_cmd(
     root: Path = typer.Option(default_oscd_root(), "--root"),

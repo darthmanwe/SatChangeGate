@@ -40,12 +40,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Kept out of the runtime so the container stays lean: the funnel itself needs
+# neither. Only the evaluation and reporting path uses them.
+baseline = ["scikit-learn>=1.3,<2", "matplotlib>=3.7,<4"]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "ruff>=0.6",
     "mypy>=1.8",
     "types-PyYAML",
+    "satchangegate[baseline]",
 ]
 goes = ["goes2go>=2025.1", "xarray>=2023.1", "netCDF4>=1.6", "h5py>=3.8"]
 
