@@ -1,0 +1,178 @@
+{
+  "first_embedding_year": 2017,
+  "n_pairs": 24,
+  "n_t1_covered": 1,
+  "n_t2_covered": 24,
+  "n_bitemporal_measurable": 1,
+  "pct_bitemporal_measurable": 4.2,
+  "pairs": [
+    {
+      "city": "abudhabi",
+      "year_t1": 2016,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "aguasclaras",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "beihai",
+      "year_t1": 2016,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "beirut",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "bercy",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "bordeaux",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "brasilia",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "chongqing",
+      "year_t1": 2017,
+      "year_t2": 2018,
+      "t1_covered": true,
+      "t2_covered": true
+    },
+    {
+      "city": "cupertino",
+      "year_t1": 2015,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "dubai",
+      "year_t1": 2015,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "hongkong",
+      "year_t1": 2016,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "lasvegas",
+      "year_t1": 2015,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "milano",
+      "year_t1": 2016,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "montpellier",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "mumbai",
+      "year_t1": 2015,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "nantes",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "norcia",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "paris",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "pisa",
+      "year_t1": 2015,
+      "year_t2": 2018,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "rennes",
+      "year_t1": 2015,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "rio",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "saclay_e",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "saclay_w",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    },
+    {
+      "city": "valencia",
+      "year_t1": 2016,
+      "year_t2": 2017,
+      "t1_covered": false,
+      "t2_covered": true
+    }
+  ]
+}

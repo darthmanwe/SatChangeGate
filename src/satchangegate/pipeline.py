@@ -86,6 +86,21 @@ def run_from_bands(
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     bands_t1, bands_t2 = resample_to_common_grid(raw_t1, raw_t2)
+
+    # Optional relative radiometric normalization, before masks and indices so
+    # the two cannot disagree about what a given reflectance means.
+    normalization = None
+    if settings.preprocess.normalize:
+        from satchangegate.preprocess.radiometric import normalize_to_reference
+
+        bands_t2, report = normalize_to_reference(
+            bands_t1,
+            bands_t2,
+            iterations=settings.preprocess.pif_iterations,
+            invariant_percentile=settings.preprocess.pif_invariant_percentile,
+        )
+        normalization = report.to_dict()
+
     registration_px = estimate_registration_error(bands_t1, bands_t2)
 
     masks_t1 = compute_ephemeral_masks(bands_t1, settings.masks)
@@ -192,6 +207,9 @@ def run_from_bands(
         "ground_truth_label": ground_truth_label,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "provenance": provenance(settings),
+        # Null when normalization is off, which is the default. Recorded either
+        # way so a result carries whether its inputs were corrected.
+        "radiometric_normalization": normalization,
         "quality": quality.model_dump(),
         "classical": gate_art.result.model_dump(),
         "vlm_called": vlm_called,

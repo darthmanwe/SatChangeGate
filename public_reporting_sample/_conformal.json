@@ -1,0 +1,98 @@
+{
+  "calibration": {
+    "target_fnr_alpha": 0.2,
+    "confidence_delta": 0.1,
+    "lambda": 0.2,
+    "calibration_fnr": 0.1173,
+    "calibration_fnr_upper_bound": 0.1975,
+    "n_calibration": 419,
+    "n_calibration_positive": 179,
+    "calibration_cities": [
+      "abudhabi",
+      "mumbai",
+      "nantes",
+      "pisa"
+    ],
+    "flagged_fraction_at_lambda": 0.8711,
+    "risk_controlled": true,
+    "method": "Learn-then-Test with a Hoeffding upper confidence bound",
+    "assumption": "Exchangeability between calibration and deployment tiles. A geographic split violates this, so the guarantee is conditional and is tested per city rather than asserted."
+  },
+  "held_out_test": {
+    "lambda": 0.2,
+    "target_fnr_alpha": 0.2,
+    "observed_fnr": 0.1768,
+    "observed_recall": 0.8232,
+    "held_overall": true,
+    "flagged_fraction": 0.7397,
+    "cities_tested": 9,
+    "cities_where_it_held": 7,
+    "per_city": {
+      "brasilia": {
+        "n": 39,
+        "n_positive": 23,
+        "fnr": 0.0,
+        "recall": 1.0,
+        "held": true
+      },
+      "chongqing": {
+        "n": 85,
+        "n_positive": 65,
+        "fnr": 0.0923,
+        "recall": 0.9077,
+        "held": true
+      },
+      "dubai": {
+        "n": 104,
+        "n_positive": 69,
+        "fnr": 0.3768,
+        "recall": 0.6232,
+        "held": false
+      },
+      "lasvegas": {
+        "n": 126,
+        "n_positive": 105,
+        "fnr": 0.1714,
+        "recall": 0.8286,
+        "held": true
+      },
+      "milano": {
+        "n": 54,
+        "n_positive": 17,
+        "fnr": 0.5882,
+        "recall": 0.4118,
+        "held": false
+      },
+      "montpellier": {
+        "n": 41,
+        "n_positive": 27,
+        "fnr": 0.0,
+        "recall": 1.0,
+        "held": true
+      },
+      "norcia": {
+        "n": 15,
+        "n_positive": 8,
+        "fnr": 0.0,
+        "recall": 1.0,
+        "held": true
+      },
+      "rio": {
+        "n": 27,
+        "n_positive": 19,
+        "fnr": 0.0526,
+        "recall": 0.9474,
+        "held": true
+      },
+      "valencia": {
+        "n": 43,
+        "n_positive": 12,
+        "fnr": 0.0,
+        "recall": 1.0,
+        "held": true
+      }
+    },
+    "reading": "The guarantee held on 7 of 9 held-out cities with positives. Exchangeability across geographies is exactly what a city-level split breaks, so a failure here is a property of the assumption, not a bug in the procedure."
+  },
+  "n_test": 534
+}

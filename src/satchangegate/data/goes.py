@@ -189,5 +189,8 @@ def verify_layout(root: Path | None = None) -> tuple[bool, str]:
         return False, f"GOES root missing: {root}"
     files = list(root.glob("*.nc")) + list(root.glob("*.json"))
     if not files:
-        return False, f"No GOES files under {root}. Run: satchangegate download-goes"
+        return (
+            False,
+            f"No GOES files under {root}. Run: fetch_goes_abi_snapshot() (no CLI command; this track is not wired in)",
+        )
     return True, f"Found {len(files)} GOES artifact(s) under {root}"

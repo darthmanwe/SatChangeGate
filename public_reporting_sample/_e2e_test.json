@@ -1,0 +1,138 @@
+{
+  "split": "test",
+  "seed": 42,
+  "sample_strategy": "stratified",
+  "batch": true,
+  "n": 621,
+  "cities_with_candidates": 9,
+  "cities_verified": 9,
+  "vlm_coverage_by_city": {
+    "brasilia": {
+      "candidates": 11,
+      "verified": 5
+    },
+    "chongqing": {
+      "candidates": 49,
+      "verified": 22
+    },
+    "dubai": {
+      "candidates": 33,
+      "verified": 15
+    },
+    "lasvegas": {
+      "candidates": 70,
+      "verified": 32
+    },
+    "milano": {
+      "candidates": 9,
+      "verified": 4
+    },
+    "montpellier": {
+      "candidates": 7,
+      "verified": 3
+    },
+    "norcia": {
+      "candidates": 12,
+      "verified": 5
+    },
+    "rio": {
+      "candidates": 15,
+      "verified": 7
+    },
+    "valencia": {
+      "candidates": 15,
+      "verified": 7
+    }
+  },
+  "gate_metrics": {
+    "n": 534,
+    "n_positive": 345,
+    "n_negative": 189,
+    "confusion": {
+      "tp": 178,
+      "fp": 43,
+      "fn": 167,
+      "tn": 146
+    },
+    "recall": 0.5159,
+    "recall_ci95": [
+      0.4633,
+      0.5682
+    ],
+    "has_negative_class": true,
+    "precision": 0.8054,
+    "precision_ci95": [
+      0.7482,
+      0.8522
+    ],
+    "specificity": 0.7725,
+    "specificity_ci95": [
+      0.7076,
+      0.8265
+    ],
+    "f1": 0.629,
+    "balanced_accuracy": 0.6442
+  },
+  "vlm_verdicts": {
+    "likely_artifact": 16,
+    "real_change": 60,
+    "uncertain": 24
+  },
+  "funnel_cost": {
+    "n_pairs": 621,
+    "n_errors": 0,
+    "n_tier0_refused": 87,
+    "tier0_refused_pct": 14.01,
+    "n_assessable": 534,
+    "n_gate_filtered": 313,
+    "gate_filtered_pct": 58.61,
+    "total_reduction_pct": 64.41,
+    "n_vlm_calls": 100,
+    "n_batch_calls": 100,
+    "vlm_call_rate_pct": 16.1,
+    "input_tokens": 289259,
+    "output_tokens": 35934,
+    "cost_usd": {
+      "vlm": 0.4689,
+      "llm": 0.0,
+      "total": 0.4689,
+      "per_pair": 0.000755,
+      "mean_per_vlm_call": 0.004689,
+      "mean_per_vlm_call_synchronous": 0.009379
+    },
+    "counterfactual_review_everything_usd": 2.912,
+    "projected_cost_at_gate_rate_usd": 1.0363,
+    "savings_vs_review_everything_usd": 1.8757,
+    "savings_pct": 64.41,
+    "savings_pct_note": "savings_pct equals the share of pairs the funnel did not forward; with one flat per-call price it restates the candidate rate rather than measuring anything further. batch_saving_pct is independent.",
+    "projected_cost_synchronous_usd": 2.0727,
+    "batch_saving_usd": 1.0363,
+    "batch_saving_pct": 50.0,
+    "vlm_budget_capped": true,
+    "n_candidates": 221,
+    "n_unpriced_calls": 0,
+    "cost_is_complete": true
+  },
+  "thresholds": {
+    "min_changed_area_percent": 2.0,
+    "ndvi_delta_mean_min": 0.02,
+    "ndbi_delta_mean_min": 0.02,
+    "ndwi_delta_mean_min": 0.15,
+    "ndvi_strong_min": 0.25,
+    "ndbi_strong_min": 0.25,
+    "ssim_no_change_min": 0.65,
+    "phash_no_change_max": 16,
+    "urbanization_score_min": 0.1,
+    "magnitude_p95_min": 0.2,
+    "min_largest_component_px": 64,
+    "adaptive_threshold": true,
+    "background_sigma": 2.0,
+    "min_absolute_delta": 0.1,
+    "max_absolute_delta": 0.3,
+    "index_delta_small": 0.1,
+    "cva_magnitude_threshold": 0.24,
+    "cva_magnitude_mean_min": 0.28,
+    "min_component_size_px": 32,
+    "open_radius_px": 1
+  }
+}

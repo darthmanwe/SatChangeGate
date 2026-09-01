@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "satchangegate"
-version = "0.2.0"
+version = "0.3.0"
 description = "Preprocessing-first satellite change detection with a cost-controlled VLM review funnel"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,6 +52,9 @@ dev = [
     "satchangegate[baseline]",
 ]
 goes = ["goes2go>=2025.1", "xarray>=2023.1", "netCDF4>=1.6", "h5py>=3.8"]
+# AlphaEarth embeddings. Only the Earth Engine source needs this; the cached-.npy
+# source is pure numpy, so `embedding-coverage` and every test run without it.
+embeddings = ["earthengine-api>=1.0,<2"]
 
 [project.urls]
 Homepage = "https://github.com/darthmanwe/SatChangeGate"

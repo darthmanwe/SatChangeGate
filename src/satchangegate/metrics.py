@@ -160,18 +160,67 @@ def iou(pred: Any, gt: Any) -> float:
     return float((p & g).sum() / union)
 
 
+def pixel_confusion(pred: Any, gt: Any, valid: Any = None) -> ConfusionMatrix:
+    """Pixel-level confusion matrix for a predicted mask against ground truth.
+
+    ``valid`` restricts the count to observed pixels, so masked-out cloud does
+    not silently accumulate true negatives and inflate specificity.
+    """
+    import numpy as np
+
+    p = np.asarray(pred).astype(bool)
+    g = np.asarray(gt).astype(bool)
+    if p.shape != g.shape:
+        raise ValueError(f"mask shape mismatch: {p.shape} vs {g.shape}")
+    if valid is not None:
+        v = np.asarray(valid).astype(bool)
+        p, g = p & v, g & v
+        keep = v
+    else:
+        keep = np.ones_like(p, dtype=bool)
+    return ConfusionMatrix(
+        tp=int((p & g & keep).sum()),
+        fp=int((p & ~g & keep).sum()),
+        fn=int((~p & g & keep).sum()),
+        tn=int((~p & ~g & keep).sum()),
+    )
+
+
+def pixel_metrics(pred: Any, gt: Any, valid: Any = None) -> dict[str, Any]:
+    """Pixel-level F1 and IoU, with the confusion matrix they derive from.
+
+    This exists because the repo published a pixel-level F1 figure that no code
+    path computed: its only trace was a comment recording a *train*-split number,
+    quoted in a section about the test split. A headline number needs a command
+    that reproduces it.
+    """
+    cm = pixel_confusion(pred, gt, valid)
+    out = cm.to_dict()
+    out["iou"] = round(iou(pred, gt), 4)
+    return out
+
+
 @dataclass
 class FunnelCost:
     """Cost accounting for the review funnel.
 
     This is the repo's central claim, so it is measured rather than asserted:
     every figure derives from real token usage returned by the API.
+
+    Two rejections are counted separately, because they are different claims.
+    Tier 0 *refuses to judge* a pair whose imagery is unusable; the gate *judges*
+    a pair and finds no change. Reporting one combined "filtered 64.6%" credited
+    the gate with 87 co-registration failures it had no part in.
     """
 
     n_pairs: int = 0
+    # Refused by Tier 0 quality checks: unusable imagery, not a gate decision.
+    n_tier0_refused: int = 0
+    # Judged by the gate and found unchanged. Denominator is the assessable set.
     n_gate_filtered: int = 0
     n_candidates: int = 0
     n_vlm_calls: int = 0
+    n_batch_calls: int = 0
     n_errors: int = 0
     n_unpriced_calls: int = 0
     vlm_cost_usd: float = 0.0
@@ -179,6 +228,15 @@ class FunnelCost:
     input_tokens: int = 0
     output_tokens: int = 0
     per_call_costs: list[float] = field(default_factory=list)
+    # What each call would have cost at the synchronous rate. Batched calls bill
+    # at half, so this is the only way to report a saving that is not simply the
+    # candidate rate restated (see the note emitted in to_dict).
+    per_call_sync_costs: list[float] = field(default_factory=list)
+
+    @property
+    def n_assessable(self) -> int:
+        """Pairs Tier 0 was willing to judge."""
+        return max(0, self.n_pairs - self.n_tier0_refused)
 
     @property
     def total_cost_usd(self) -> float:
@@ -188,19 +246,34 @@ class FunnelCost:
     def mean_cost_per_vlm_call(self) -> float:
         return (sum(self.per_call_costs) / len(self.per_call_costs)) if self.per_call_costs else 0.0
 
+    @property
+    def mean_sync_cost_per_vlm_call(self) -> float:
+        costs = self.per_call_sync_costs or self.per_call_costs
+        return (sum(costs) / len(costs)) if costs else 0.0
+
     def to_dict(self) -> dict[str, Any]:
         n = self.n_pairs or 1
+        assessable = self.n_assessable or 1
         naive = self.mean_cost_per_vlm_call * self.n_pairs
         actual = self.total_cost_usd
         # What the funnel would cost if every gate candidate were verified,
         # rather than only the ones a budget cap allowed through.
         projected = self.mean_cost_per_vlm_call * self.n_candidates
+        # The same candidates priced as if none had been batched. Independent of
+        # the filter rate, so this is a real second measurement.
+        projected_sync = self.mean_sync_cost_per_vlm_call * self.n_candidates
         return {
             "n_pairs": self.n_pairs,
             "n_errors": self.n_errors,
+            # Three distinct reductions, never one blended number.
+            "n_tier0_refused": self.n_tier0_refused,
+            "tier0_refused_pct": round(100.0 * self.n_tier0_refused / n, 2),
+            "n_assessable": self.n_assessable,
             "n_gate_filtered": self.n_gate_filtered,
-            "gate_filtered_pct": round(100.0 * self.n_gate_filtered / n, 2),
+            "gate_filtered_pct": round(100.0 * self.n_gate_filtered / assessable, 2),
+            "total_reduction_pct": round(100.0 * (self.n_pairs - self.n_candidates) / n, 2),
             "n_vlm_calls": self.n_vlm_calls,
+            "n_batch_calls": self.n_batch_calls,
             "vlm_call_rate_pct": round(100.0 * self.n_vlm_calls / n, 2),
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -210,6 +283,7 @@ class FunnelCost:
                 "total": round(actual, 4),
                 "per_pair": round(actual / n, 6),
                 "mean_per_vlm_call": round(self.mean_cost_per_vlm_call, 6),
+                "mean_per_vlm_call_synchronous": round(self.mean_sync_cost_per_vlm_call, 6),
             },
             "counterfactual_review_everything_usd": round(naive, 4),
             # Attributable to the gate only. Spend actually incurred can be far
@@ -219,6 +293,20 @@ class FunnelCost:
             "projected_cost_at_gate_rate_usd": round(projected, 4),
             "savings_vs_review_everything_usd": round(max(0.0, naive - projected), 4),
             "savings_pct": (round(100.0 * (1 - projected / naive), 2) if naive > 0 else 0.0),
+            # Honest framing of the line above: with a single per-call price it is
+            # algebraically 1 - n_candidates/n_pairs, i.e. the candidate rate under
+            # another name. It carries independent information only once the funnel
+            # has more than one price, which is what the batch figures below add.
+            "savings_pct_note": (
+                "savings_pct equals the share of pairs the funnel did not forward; "
+                "with one flat per-call price it restates the candidate rate rather "
+                "than measuring anything further. batch_saving_pct is independent."
+            ),
+            "projected_cost_synchronous_usd": round(projected_sync, 4),
+            "batch_saving_usd": round(max(0.0, projected_sync - projected), 4),
+            "batch_saving_pct": (
+                round(100.0 * (1 - projected / projected_sync), 2) if projected_sync > 0 else 0.0
+            ),
             "vlm_budget_capped": self.n_vlm_calls < self.n_candidates,
             "n_candidates": self.n_candidates,
             # When a model has no published rate every figure above understates

@@ -9,6 +9,7 @@ Run: python scripts/make_figures.py
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -39,7 +40,38 @@ CANDIDATE = "#c1440e"
 ACCENT = "#2f855a"
 
 
-def funnel_diagram(path: Path) -> None:
+def funnel_counts(reports_dir: Path, split: str = "test") -> dict:
+    """The measured funnel counts, read from the evaluation the repo published.
+
+    These used to be string literals in this file. Nothing cross-checked them
+    against `_eval_test.json`, so refitting the thresholds would silently leave
+    the README's diagram disagreeing with the README's table.
+    """
+    path = reports_dir / f"_eval_{split}.json"
+    if not path.is_file():
+        raise SystemExit(f"No {path}. Run: satchangegate eval --split {split}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    n_tiles = int(data["n_tiles"])
+    n_low = int(data["n_low_quality"])
+    n_candidate = int(data["n_candidate_change"])
+    return {
+        "n_tiles": n_tiles,
+        "n_low_quality": n_low,
+        "n_assessable": int(data.get("n_assessable", n_tiles - n_low)),
+        "n_no_change": int(data.get("n_assessable", n_tiles - n_low)) - n_candidate,
+        "n_candidate": n_candidate,
+        "candidate_pct": float(data["candidate_rate_pct"]),
+        "tier0_pct": float(data.get("tier0_refused_pct", 100.0 * n_low / max(1, n_tiles))),
+        "gate_pct": float(data["gate_filtered_pct"]),
+        "total_pct": float(
+            data.get("total_reduction_pct", 100.0 * (n_tiles - n_candidate) / max(1, n_tiles))
+        ),
+        "n_cities": len(data.get("cities", [])),
+        "n_cities_scored": len(data.get("cities_scored", data.get("cities", []))),
+    }
+
+
+def funnel_diagram(path: Path, counts: dict) -> None:
     """The three-tier funnel, annotated with the measured filter rates."""
     fig, ax = plt.subplots(figsize=(9.0, 4.2), dpi=160)
     ax.set_xlim(0, 10)
@@ -47,7 +79,7 @@ def funnel_diagram(path: Path) -> None:
     ax.axis("off")
 
     stages = [
-        ("Every pair\n621 tiles", 0.25, 1.75, "#e4e7eb", INK),
+        (f"Every pair\n{counts['n_tiles']} tiles", 0.25, 1.75, "#e4e7eb", INK),
         ("Tier 0 — quality\ncloud · snow · shadow\nco-registration", 2.35, 2.15, "#dbeafe", INK),
         ("Tier 1 — classical gate\nindices · SSIM\npHash · CVA", 5.05, 2.35, "#fde8d7", INK),
         ("Tier 2 — VLM verify\nonly candidates", 7.95, 1.85, "#d7f0e2", INK),
@@ -80,8 +112,8 @@ def funnel_diagram(path: Path) -> None:
 
     # Drop-outs, with the numbers actually measured on the held-out split.
     drops = [
-        (3.65, "87 tiles\nfailed Tier 0", FILTERED),
-        (6.2, "314 tiles\nno_change", FILTERED),
+        (3.65, f"{counts['n_low_quality']} tiles\nfailed Tier 0", FILTERED),
+        (6.2, f"{counts['n_no_change']} tiles\nno_change", FILTERED),
     ]
     for x, label, colour in drops:
         ax.add_patch(
@@ -99,7 +131,7 @@ def funnel_diagram(path: Path) -> None:
     ax.text(
         8.88,
         1.55,
-        "220 candidates\nreach the model\n(35.4%)",
+        f"{counts['n_candidate']} candidates\nreach the model\n({counts['candidate_pct']:.1f}%)",
         ha="center",
         va="top",
         fontsize=8.5,
@@ -119,7 +151,10 @@ def funnel_diagram(path: Path) -> None:
     ax.text(
         5.0,
         0.42,
-        "64.6% of tiles are resolved without an API call — measured on 10 held-out cities",
+        f"{counts['total_pct']:.1f}% resolved without an API call — "
+        f"{counts['tier0_pct']:.1f}% refused by Tier 0, "
+        f"{counts['gate_pct']:.1f}% of the rest filtered by the gate — "
+        f"scored on {counts['n_cities_scored']} of {counts['n_cities']} held-out cities",
         ha="center",
         va="center",
         fontsize=9.5,
@@ -200,10 +235,41 @@ def detection_panel(path: Path, city: str = "lasvegas") -> None:
     plt.close(fig)
 
 
+REPORTS = REPO / "data" / "reports"
+SAMPLES = REPO / "public_reporting_sample"
+
+
+def pr_curves(path: Path) -> None:
+    """Re-plot the precision-recall curves from the committed baselines JSON.
+
+    This figure used to be produced only as a side effect of running
+    `satchangegate baselines`, into `data/reports/`, and then hand-copied into
+    `docs/figures/`. `make figures` regenerated two of the three README figures
+    and silently left this one stale.
+    """
+    from satchangegate.baseline import plot_pr_curves
+
+    source = REPORTS / "_baselines.json"
+    if not source.is_file():
+        source = SAMPLES / "_baselines.json"
+    if not source.is_file():
+        raise SystemExit("No _baselines.json. Run: satchangegate baselines")
+    plot_pr_curves(json.loads(source.read_text(encoding="utf-8")), path)
+
+
 def main() -> int:
     FIGURES.mkdir(parents=True, exist_ok=True)
-    funnel_diagram(FIGURES / "funnel.png")
+    counts = funnel_counts(REPORTS if (REPORTS / "_eval_test.json").is_file() else SAMPLES)
+    funnel_diagram(FIGURES / "funnel.png", counts)
     print(f"wrote {FIGURES / 'funnel.png'}")
+
+    try:
+        pr_curves(FIGURES / "pr_curves.png")
+        print(f"wrote {FIGURES / 'pr_curves.png'}")
+    except SystemExit as exc:
+        print(exc)
+        return 1
+
     try:
         detection_panel(FIGURES / "detection_lasvegas.png")
         print(f"wrote {FIGURES / 'detection_lasvegas.png'}")

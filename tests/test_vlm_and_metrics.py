@@ -222,7 +222,34 @@ class TestUsageAndCost:
         rec = UsageRecord(
             model="claude-sonnet-5", kind="vlm", input_tokens=1_000_000, output_tokens=0
         )
-        assert rec.cost_usd == pytest.approx(PRICING_USD_PER_MTOK["claude-sonnet-5"][0])
+        assert rec.cost_usd == pytest.approx(PRICING_USD_PER_MTOK["claude-sonnet-5"].input_usd)
+
+    def test_sonnet_5_rate_is_pinned(self) -> None:
+        """Pin the published rate so the next drift is caught by CI, not by a reader.
+
+        This table was previously wrong: claude-sonnet-5 carried (3.00, 15.00), a
+        scheduled increase that was cancelled and never took effect, which made
+        every published cost figure ~50% too high.
+        """
+        rate = PRICING_USD_PER_MTOK["claude-sonnet-5"]
+        assert (rate.input_usd, rate.output_usd) == (2.00, 10.00)
+        assert (rate.batch_input_usd, rate.batch_output_usd) == (1.00, 5.00)
+
+    def test_batch_calls_are_priced_at_half(self) -> None:
+        kwargs = {"model": "claude-sonnet-5", "kind": "vlm"}
+        sync = UsageRecord(**kwargs, input_tokens=100_000, output_tokens=10_000)
+        batched = UsageRecord(**kwargs, input_tokens=100_000, output_tokens=10_000, batch=True)
+        assert batched.cost_usd == pytest.approx(sync.cost_usd / 2)
+
+    def test_cache_reads_are_priced_at_a_tenth_of_input(self) -> None:
+        rec = UsageRecord(model="claude-sonnet-5", kind="vlm", cache_read_input_tokens=1_000_000)
+        assert rec.cost_usd == pytest.approx(2.00 * 0.1)
+
+    def test_cache_writes_are_priced_above_input(self) -> None:
+        rec = UsageRecord(
+            model="claude-sonnet-5", kind="vlm", cache_creation_input_tokens=1_000_000
+        )
+        assert rec.cost_usd == pytest.approx(2.00 * 1.25)
 
     def test_unknown_model_costs_zero_rather_than_guessing(self) -> None:
         rec = UsageRecord(model="mystery", kind="vlm", input_tokens=10_000, output_tokens=10_000)

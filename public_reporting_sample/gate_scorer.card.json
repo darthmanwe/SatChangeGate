@@ -1,0 +1,66 @@
+{
+  "artifact_version": 1,
+  "model": "HistGradientBoostingClassifier",
+  "sklearn_version": "1.9.0",
+  "feature_names": [
+    "ssim",
+    "phash_distance",
+    "ndvi_delta_mean",
+    "ndbi_delta_mean",
+    "ndwi_delta_mean",
+    "ndvi_delta_abs_mean",
+    "ndbi_delta_abs_mean",
+    "ndwi_delta_abs_mean",
+    "cva_magnitude_mean",
+    "changed_area_percent",
+    "ndvi_delta_p10",
+    "ndbi_delta_p90",
+    "urbanization_score",
+    "magnitude_p95",
+    "magnitude_p99",
+    "largest_component_px",
+    "n_components",
+    "component_fill_ratio"
+  ],
+  "feature_hash": "0338dfb74c00c545",
+  "n_train": 1351,
+  "train_cities": [
+    "abudhabi",
+    "aguasclaras",
+    "beihai",
+    "beirut",
+    "bercy",
+    "bordeaux",
+    "cupertino",
+    "hongkong",
+    "mumbai",
+    "nantes",
+    "paris",
+    "pisa",
+    "rennes",
+    "saclay_e"
+  ],
+  "held_out_metrics": {
+    "n_test": 621,
+    "average_precision": 0.8593,
+    "roc_auc": 0.8015,
+    "test_cities": [
+      "brasilia",
+      "chongqing",
+      "dubai",
+      "lasvegas",
+      "milano",
+      "montpellier",
+      "norcia",
+      "rio",
+      "saclay_w",
+      "valencia"
+    ]
+  },
+  "intended_use": "Tier-1 triage scoring for satellite change candidates, in place of the hand-written rule gate. Emits a probability, not a decision; the operating point is chosen separately.",
+  "limitations": [
+    "Fitted on OSCD urban-change labels from the listed cities only. OSCD labels urban change and treats seasonal, agricultural and hydrological change as negative, so the scorer inherits that definition of 'change'.",
+    "No feature is scene-constant, so the model cannot key on city identity -- but it has still only seen these cities. Any new AOI needs its own validation.",
+    "Unlike the rule gate it returns no human-readable reason. If an operator has to justify a decision, that is a real cost."
+  ]
+}
