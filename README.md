@@ -7,6 +7,7 @@ review runs only on what survives.
 [![CI](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml/badge.svg)](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue.svg)](CHANGELOG.md)
 
 ![Gated review funnel](docs/figures/funnel.png)
 
@@ -215,6 +216,25 @@ the API returned, not from an estimate.
 | Filtered by the gate | 313 | 58.6% of assessable |
 | Reached the VLM | 221 candidates (100 verified) | 41.4% of assessable |
 
+The 100 calls were apportioned across cities by largest-remainder, with a floor
+of one call each, so every city that produced a candidate is represented in
+proportion to what it produced:
+
+| City | Candidates | Verified | Share of budget |
+|---|---|---|---|
+| lasvegas | 70 | 32 | 32% |
+| chongqing | 49 | 22 | 22% |
+| dubai | 33 | 15 | 15% |
+| valencia | 15 | 7 | 7% |
+| rio | 15 | 7 | 7% |
+| norcia | 12 | 5 | 5% |
+| brasilia | 11 | 5 | 5% |
+| milano | 9 | 4 | 4% |
+| montpellier | 7 | 3 | 3% |
+| **Total** | **221** | **100** | **100%** |
+
+**9 of 9 cities with candidates.** The run this replaces covered three.
+
 **Spend: $0.4689 actual, $0.004689 per verification.** The same 100 calls
 submitted synchronously would have cost $0.9379, so batching saved **50.0%** —
 a saving that is *independent* of the gate's filter rate, which matters because
@@ -266,22 +286,32 @@ Honest framing matters more here than a good-looking number, so:
 
 - **The VLM numbers rest on 100 calls from one split.** Enough for the intervals
   quoted, not enough to be a production SLA, and all from a single benchmark.
-- **This is a triage gate, not a segmentation model.** At the pixel level it
-  reaches **F1 0.261, IoU 0.150** on the held-out split, against roughly
-  0.50–0.60 for supervised deep models on OSCD. It is not competitive with them
-  and is not trying to be — it is a ~10 ms/tile filter that decides whether to
-  spend money. Reproduce with `satchangegate eval --split test --pixel-metrics`.
-  (An earlier version of this README quoted F1 ≈ 0.13 here. That number came
-  from a code comment recording a *train*-split figure, and no command in the
-  repo computed it. There is now a command, and the real held-out number is
-  roughly twice what was claimed.)
+- **This is a triage gate, not a segmentation model.** Scored against the
+  dataset's own masks over 2.40 M observed pixels on the held-out split:
+
+  | Pixel-level | Value |
+  |---|---|
+  | Precision | 0.265 |
+  | Recall | 0.257 |
+  | **F1** | **0.261** |
+  | **IoU** | **0.150** |
+  | Specificity | 0.957 |
+
+  Against roughly 0.50–0.60 F1 for supervised deep models on OSCD. It is not
+  competitive with them and is not trying to be — it is a ~10 ms/tile filter that
+  decides whether to spend money, and the tile-level number is the one that
+  matters for that job. Reproduce with
+  `satchangegate eval --split test --pixel-metrics`. (An earlier version of this
+  README quoted F1 ≈ 0.13 here. That number came from a code comment recording a
+  *train*-split figure, and no command in the repo computed it. There is now a
+  command, and the real held-out number is roughly twice what was claimed.)
 - **OSCD labels only *urban* change.** Seasonal, agricultural, and hydrological
   change across a multi-year gap is spectrally enormous and labelled negative, so
   a magnitude-based detector keys on the wrong signal. No single feature
   separates the classes — the best directional one (NDBI up, NDVI down) reaches
   only AUC ≈ 0.56. What the baseline comparison shows is that this is a *feature
   combination* problem rather than a dead end: the same eighteen features reach
-  ROC AUC 0.802 once a gradient-boosted model is allowed to combine them. The rules
+  ROC AUC 0.801 once a gradient-boosted model is allowed to combine them. The rules
   leave that on the table, which is the honest reading of the table above.
 - **Cloud filtering rarely fires on OSCD**, because the dataset curators picked
   clear scenes. What Tier 0 actually catches here is **co-registration failure**:
@@ -329,24 +359,50 @@ at all.
 
 ## Changelog
 
-[CHANGELOG.md](CHANGELOG.md) tracks each update, with two conventions that follow
-from the paragraph above: **corrections get their own subsection** — what was
-claimed, what is true, why they differed — and **negative results are entries
+Full history in [CHANGELOG.md](CHANGELOG.md), which follows two conventions that
+fall out of the section above: **corrections get their own subsection** — what
+was claimed, what is true, why they differed — and **negative results are entries
 too**, because something measured and rejected is a result.
 
-The current release is **0.3.0** (2026-08-30), which was measurement integrity
-first and gate accuracy second: six corrected claims, a risk-controlled operating
-point that reports where it fails, eight new gate features, a runnable learned
-scorer, batched verification at half the price, and two published negative
-results. Highlights:
+### 0.3.0 — measurement integrity, then gate accuracy
 
-| | Before 0.3.0 | Now |
+The current release. Six corrected claims, and the improvements that came after
+them:
+
+| Area | What changed |
+|---|---|
+| **Sampling** | `e2e --sample stratified` apportions the call budget per city by largest remainder, applied to *candidates* rather than input order. Coverage went from 3 of 10 cities to **9 of 9**. |
+| **Reproducibility** | `vlm-report`, `conformal`, `operating-points`, `fit-scorer`, `embedding-coverage` — every committed artifact now has a command that regenerates it. |
+| **Guarantees** | Conformal risk control (Learn-then-Test, Hoeffding bound) replaces a grid-search argmax with a threshold carrying a confidence — and reports the two cities it fails on. |
+| **Cost** | Batch API submission at half price, a corrected rate card, budget→operating-point curves, and a batch id written at submit time so a crash cannot double-spend. |
+| **Gate** | Eight directional, distributional and shape features; two rules that read the signed deltas the gate had been discarding. |
+| **Scorer** | The learned model is runnable rather than merely offered, with a feature-hash guard that raises instead of scoring a changed vector quietly. |
+| **Tests** | 112 → **183** offline, plus the first 4 that actually touch real 13-band imagery. |
+
+Measured outcomes:
+
+| | Before | Now |
 |---|---|---|
-| Gate + VLM precision | 0.971, on 3 of 10 cities | **0.983**, on **9 of 9** cities with candidates |
+| Gate + VLM precision | 0.971 (66/68, 3 of 10 cities) | **0.983** (59/60, **9 of 9**) |
+| VLM retention of true change | 0.759 | 0.694 |
+| Gate precision / recall / F1 | 0.804 / 0.513 / 0.626 | **0.805 / 0.516 / 0.629** |
 | Logistic regression AP | 0.802 | **0.846** |
+| Gradient boosting AP | 0.861 | 0.859 |
 | Recall with a guarantee attached | not on offer | **0.823**, and the 2 cities it fails on are named |
 | Measured spend, 100 calls | $1.2941 (wrong rate) | **$0.4689** (right rate, batched) |
-| Offline tests | 112 | **183** |
+
+Two results that did **not** ship: refitting the thresholds across 8,640
+combinations found nothing better than the incumbent, and PIF radiometric
+normalization measurably hurts on OSCD. Both are documented above rather than
+deleted.
+
+### Earlier
+
+**0.2.0** — learned baselines and PR curves, so "why not just use a classifier"
+is answered with a number; the first live 100-call VLM run; spend controls after
+code review. **0.1.0** — rebuilt on real 13-band Sentinel-2 with a leakage-safe
+split recovered from the label archives, Tier 0 quality masks, the classical
+gate, and the three defects that running the VLM tier live exposed.
 
 ## How it works
 
@@ -476,6 +532,9 @@ make baselines         # rule gate vs learned models (needs .[baseline])
 make vlm-report        # recompute the second-tier figures from the ledger
 make figures           # regenerate all three README figures
 ```
+
+Changes are tracked in [CHANGELOG.md](CHANGELOG.md); corrections to published
+numbers and results that were measured and rejected both get entries there.
 
 The test suite runs offline with no API key and no dataset: `pytest` deselects
 the `oscd`, `e2e`, and `vlm` markers by default, and a session fixture unsets

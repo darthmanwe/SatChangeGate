@@ -100,6 +100,25 @@ Two structural gaps sat behind them:
 - Removed the OPTIMUS README row and the `run-optimus` / `download-goes`
   references to commands that no longer exist.
 
+### Documentation
+
+- **`CHANGELOG.md`** — this file. Previously there was none; version history
+  lived only in commit messages.
+- **README `Corrections` table** — the six claims above, each with the real
+  number and the command that reproduces it.
+- **README `Changelog` section** — a condensed version history and a
+  before/after outcome table, so a reader can see what moved without opening
+  this file.
+- Per-city allocation of the stratified sample published in the funnel section,
+  which is what actually substantiates the word "stratified".
+- Pixel-level metrics published as precision / recall / F1 / IoU / specificity
+  over 2.40 M observed pixels, rather than a single F1 with no provenance.
+- Stale figures corrected in the prose: "eleven numeric features" (eighteen),
+  "ROC AUC 0.805" (0.802), "five rules" and "three documented rules" (six), and
+  an audit table introduced as five rows that had six.
+- The `thresholds.yaml` provenance comment still carried the conflated "gate
+  filters 64.6%" claim in the very file that produces the number. Corrected.
+
 ### Measured and rejected
 
 - **Threshold refitting found nothing better than what was already shipped.**
