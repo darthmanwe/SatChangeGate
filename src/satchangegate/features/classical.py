@@ -42,7 +42,16 @@ HEATMAP_FULL_SCALE = 0.5
 
 
 class GateFeatures(BaseModel):
-    """Everything the decision function is allowed to see."""
+    """Everything the decision function is allowed to see.
+
+    Every field is a *tile-varying* quantity. Scene-constant covariates --
+    ``season_delta_days``, ``registration_error_px`` -- are deliberately excluded
+    even though both are measured and both are plausibly informative: they take
+    one value per city, so a learned model given them can identify the city and
+    key on that instead of on change. With 14 training cities that is a short
+    road to a model that scores well and generalises to nothing. They stay in
+    ``ClassicalResult`` for reporting and in the VLM's metadata, and out of here.
+    """
 
     ssim: float
     phash_distance: int
@@ -57,6 +66,36 @@ class GateFeatures(BaseModel):
     ndwi_delta_abs_mean: float
     cva_magnitude_mean: float
     changed_area_percent: float
+
+    # --- Directional -------------------------------------------------------
+    # The signed means above were computed, carried, serialised -- and never read
+    # by `decide`, which saw only the absolute values. Absolute value erases
+    # exactly the signal the README names as the physically correct one for urban
+    # change ("NDBI up, NDVI down"), and makes construction and demolition, or
+    # clearing and regrowth, indistinguishable to the gate.
+    #
+    # Signed tails rather than signed means: a tile where one corner is built on
+    # and the rest is unchanged has a mean near zero and a decisive tail.
+    ndvi_delta_p10: float = 0.0
+    ndbi_delta_p90: float = 0.0
+    # NDBI up and NDVI down at once. The single best directional feature on this
+    # benchmark reaches only AUC ~0.56 alone, so this is not expected to carry
+    # the gate by itself -- it is expected to combine.
+    urbanization_score: float = 0.0
+
+    # --- Distributional ----------------------------------------------------
+    # A mean over a 64x64 tile cannot distinguish one hard-changed building from
+    # weak change everywhere; these can.
+    magnitude_p95: float = 0.0
+    magnitude_p99: float = 0.0
+
+    # --- Shape -------------------------------------------------------------
+    # Already computed inside `despeckle` via connected-component labelling and
+    # thrown away. Real change is contiguous; residual noise is scattered.
+    largest_component_px: int = 0
+    n_components: int = 0
+    component_fill_ratio: float = 0.0
+
     valid_observation: bool = True
 
 
@@ -81,6 +120,14 @@ class ClassicalResult(BaseModel):
     ndwi_delta_abs_mean: float = 0.0
     cva_magnitude_mean: float = 0.0
     changed_area_percent: float
+    ndvi_delta_p10: float = 0.0
+    ndbi_delta_p90: float = 0.0
+    urbanization_score: float = 0.0
+    magnitude_p95: float = 0.0
+    magnitude_p99: float = 0.0
+    largest_component_px: int = 0
+    n_components: int = 0
+    component_fill_ratio: float = 0.0
     classical_gate: GateDecision
     gate_reason: str = ""
     gate_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -188,6 +235,74 @@ def _masked_mean(delta: np.ndarray, valid: np.ndarray) -> tuple[float, float]:
         return 0.0, 0.0
     vals = delta[v]
     return float(np.mean(vals)), float(np.mean(np.abs(vals)))
+
+
+def signed_percentile(delta: np.ndarray, valid: np.ndarray, q: float) -> float:
+    """Percentile of a signed delta over valid finite pixels.
+
+    Returns 0.0 when nothing is valid, matching ``_masked_mean``: a fully masked
+    tile is unknown, not extreme.
+    """
+    v = valid & np.isfinite(delta)
+    if not v.any():
+        return 0.0
+    return float(np.percentile(delta[v], q))
+
+
+def component_stats(mask: np.ndarray) -> tuple[int, int, float]:
+    """(largest component in px, component count, fill ratio of that component).
+
+    ``fill_ratio`` is the largest component's area over the area of its bounding
+    box: a compact new building approaches 1, a thin misregistration seam along a
+    road does not. The labelling itself already happens inside ``despeckle``;
+    this reads the same structure instead of discarding it.
+    """
+    binary = mask.astype(bool)
+    if not binary.any():
+        return 0, 0, 0.0
+    labels = cc_label(binary, connectivity=2)
+    counts = np.bincount(labels.ravel())
+    counts[0] = 0
+    n_components = int((counts > 0).sum())
+    largest_label = int(np.argmax(counts))
+    largest = int(counts[largest_label])
+    ys, xs = np.nonzero(labels == largest_label)
+    box = (ys.max() - ys.min() + 1) * (xs.max() - xs.min() + 1)
+    return largest, n_components, float(largest / box) if box else 0.0
+
+
+def tile_feature_extras(
+    deltas: dict[str, np.ndarray],
+    valid: np.ndarray,
+    change_mask: np.ndarray,
+    water: np.ndarray | None = None,
+) -> dict[str, float | int]:
+    """Directional, distributional and shape features for one tile window.
+
+    Kept in one function so the single-pair path and the tiled evaluation path
+    cannot compute a different feature vector from each other -- the same class
+    of drift that once had the threshold sweep optimising a decision ladder the
+    pipeline did not run.
+    """
+    magnitude = change_magnitude(deltas, water)
+    v = valid & np.isfinite(magnitude)
+    largest, n_components, fill = component_stats(change_mask)
+    ndvi_mean = (
+        float(np.mean(deltas["ndvi"][valid & np.isfinite(deltas["ndvi"])])) if valid.any() else 0.0
+    )
+    ndbi_mean = (
+        float(np.mean(deltas["ndbi"][valid & np.isfinite(deltas["ndbi"])])) if valid.any() else 0.0
+    )
+    return {
+        "ndvi_delta_p10": signed_percentile(deltas["ndvi"], valid, 10.0),
+        "ndbi_delta_p90": signed_percentile(deltas["ndbi"], valid, 90.0),
+        "urbanization_score": ndbi_mean - ndvi_mean,
+        "magnitude_p95": float(np.percentile(magnitude[v], 95.0)) if v.any() else 0.0,
+        "magnitude_p99": float(np.percentile(magnitude[v], 99.0)) if v.any() else 0.0,
+        "largest_component_px": largest,
+        "n_components": n_components,
+        "component_fill_ratio": fill,
+    }
 
 
 def despeckle(mask: np.ndarray, *, open_radius: int, min_size: int) -> np.ndarray:
@@ -336,6 +451,10 @@ def decide(
       area       - fraction of the tile flagged by the despeckled change mask
       structural - SSIM/pHash disagreement, i.e. geometry moved
       cva        - multi-band change vector magnitude
+      direction  - NDBI up while NDVI goes down, the urban-change signature the
+                   absolute-value features could not express
+      concentration - a single large contiguous region with a decisive upper
+                   tail, which a tile-wide mean cannot see
 
     Monotone by construction: every rule is a conjunction of "evidence exceeds
     threshold" terms, so more evidence can only move a pair toward
@@ -356,13 +475,23 @@ def decide(
     area = f.changed_area_percent >= t.min_changed_area_percent
     structural = f.ssim < t.ssim_no_change_min or f.phash_distance > t.phash_no_change_max
     cva = f.cva_magnitude_mean >= t.cva_magnitude_mean_min
+    urbanizing = f.urbanization_score >= t.urbanization_score_min
+    concentrated = (
+        f.magnitude_p95 >= t.magnitude_p95_min
+        and f.largest_component_px >= t.min_largest_component_px
+    )
 
     confidence = float(
         np.clip(
-            0.45 * _ramp(spectral, t.ndvi_delta_mean_min * 0.5, t.ndvi_strong_min)
-            + 0.25 * _ramp(f.changed_area_percent, 0.0, t.min_changed_area_percent * 2)
-            + 0.20 * _ramp(f.cva_magnitude_mean, 0.0, t.cva_magnitude_mean_min * 2)
-            + 0.10 * _ramp(1.0 - f.ssim, 0.0, 1.0 - t.ssim_no_change_min),
+            0.35 * _ramp(spectral, t.ndvi_delta_mean_min * 0.5, t.ndvi_strong_min)
+            + 0.20 * _ramp(f.changed_area_percent, 0.0, t.min_changed_area_percent * 2)
+            + 0.15 * _ramp(f.cva_magnitude_mean, 0.0, t.cva_magnitude_mean_min * 2)
+            + 0.10 * _ramp(1.0 - f.ssim, 0.0, 1.0 - t.ssim_no_change_min)
+            # Directional and concentrated evidence. Both ramp from zero, so a
+            # tile with no directional signal scores exactly as it did before and
+            # the term can only add confidence, never subtract it.
+            + 0.12 * _ramp(f.urbanization_score, 0.0, t.urbanization_score_min * 2)
+            + 0.08 * _ramp(f.magnitude_p95, 0.0, t.magnitude_p95_min * 2),
             0.0,
             1.0,
         )
@@ -372,6 +501,10 @@ def decide(
         return "candidate_change", "strong landcover index change", confidence
     if moderate_spectral and area:
         return "candidate_change", "moderate landcover change over a large area", confidence
+    if urbanizing and area:
+        return "candidate_change", "built-up gain with vegetation loss", confidence
+    if concentrated:
+        return "candidate_change", "concentrated high-magnitude change region", confidence
     if area and structural and cva:
         return "candidate_change", "structural break with multi-band change vector", confidence
     if water_spectral and area:
@@ -419,6 +552,7 @@ def classical_gate(
     ndwi_m, ndwi_a = _masked_mean(deltas["ndwi"], valid)
     cva_mean = float(np.mean(cva[valid])) if n_valid else 0.0
 
+    extras = tile_feature_extras(deltas, valid, change_mask, masks.water)
     features = GateFeatures(
         ssim=ssim_val,
         phash_distance=phash_d,
@@ -431,6 +565,7 @@ def classical_gate(
         cva_magnitude_mean=cva_mean,
         changed_area_percent=changed_pct,
         valid_observation=quality.valid_observation,
+        **extras,  # type: ignore[arg-type]
     )
     decision, reason, confidence = decide(features, thresholds)
 
@@ -455,6 +590,14 @@ def classical_gate(
         ndwi_delta_abs_mean=round(ndwi_a, 4),
         cva_magnitude_mean=round(cva_mean, 4),
         changed_area_percent=round(changed_pct, 2),
+        ndvi_delta_p10=round(features.ndvi_delta_p10, 4),
+        ndbi_delta_p90=round(features.ndbi_delta_p90, 4),
+        urbanization_score=round(features.urbanization_score, 4),
+        magnitude_p95=round(features.magnitude_p95, 4),
+        magnitude_p99=round(features.magnitude_p99, 4),
+        largest_component_px=features.largest_component_px,
+        n_components=features.n_components,
+        component_fill_ratio=round(features.component_fill_ratio, 4),
         classical_gate=decision,
         gate_reason=reason,
         gate_confidence=round(confidence, 4),

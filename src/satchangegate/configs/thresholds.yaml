@@ -38,9 +38,14 @@ gate:
   # Fitted by `satchangegate tune --split train` on 1351 tiles across the 14
   # training cities, selecting on balanced accuracy. The 10 test cities were
   # held out entirely. Out-of-sample result on those held-out cities:
-  #   precision 0.804 (95% CI 0.747-0.852), recall 0.513 (0.460-0.565),
-  #   specificity 0.772 (0.708-0.827), F1 0.626, balanced accuracy 0.643,
-  #   n=534 tiles (345 change / 189 no-change). Gate filters 64.6% pre-VLM.
+  #   precision 0.805 (95% CI 0.748-0.852), recall 0.516 (0.463-0.568),
+  #   specificity 0.772 (0.708-0.827), F1 0.629, balanced accuracy 0.644,
+  #   n=534 tiles (345 change / 189 no-change) from 621 -- 9 of the 10 test
+  #   cities, since all 87 Tier-0 refusals are saclay_w and the flag is
+  #   scene-level. Reduction is three numbers, not one: Tier 0 refuses 14.0% of
+  #   all tiles, the gate filters 58.6% of what remains, total 64.4%. An earlier
+  #   version of this comment said "gate filters 64.6%", crediting the gate with
+  #   87 co-registration failures it had no part in.
   background_sigma: 2.0
   min_absolute_delta: 0.10
   max_absolute_delta: 0.30
@@ -54,6 +59,21 @@ gate:
 
   ssim_no_change_min: 0.65
   phash_no_change_max: 16
+
+  # Directional and concentration evidence, added 2026-08-30 so the gate can use
+  # the signed index deltas it had always computed and never read.
+  #
+  # Refitting swept 8,640 combinations across seven axes on the same 14 training
+  # cities and found NO combination better than the values already shipped:
+  # in-sample balanced accuracy 0.546 for both the incumbent and the argmax. The
+  # sweep reported urbanization_score_min 0.05, but only because the search keeps
+  # the first combination reaching the maximum and 0.05 comes first in the grid:
+  # 0.05 and 0.10 scored identically. The code default of 0.10 is kept, since
+  # nothing measured prefers either. Held-out effect of the new rules is small and
+  # positive: recall 0.513 -> 0.516, precision 0.804 -> 0.805, F1 0.626 -> 0.629.
+  urbanization_score_min: 0.10
+  magnitude_p95_min: 0.20
+  min_largest_component_px: 64
 
   index_delta_small: 0.10
   cva_magnitude_threshold: 0.24

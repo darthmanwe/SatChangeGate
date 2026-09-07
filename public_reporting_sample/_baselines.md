@@ -6,11 +6,11 @@ All models see exactly the features the gate uses, on the same split.
 
 | Model | Average precision | ROC AUC | Precision @ gate's recall |
 |---|---|---|---|
-| rule_gate_confidence | 0.719 | 0.728 | 0.784 |
-| logistic_regression | 0.802 | 0.747 | 0.787 |
-| gradient_boosting | 0.861 | 0.805 | 0.877 |
+| rule_gate_confidence | 0.715 | 0.719 | 0.775 |
+| logistic_regression | 0.846 | 0.783 | 0.856 |
+| gradient_boosting | 0.859 | 0.801 | 0.883 |
 
-The shipped rule gate operates at recall 0.513, precision 0.804. The final column asks what each model achieves at that same recall, which is the like-for-like comparison.
+The shipped rule gate operates at recall 0.516, precision 0.805. The final column asks what each model achieves at that same recall, which is the like-for-like comparison.
 
 ![Precision-recall curves](pr_curves.png)
 

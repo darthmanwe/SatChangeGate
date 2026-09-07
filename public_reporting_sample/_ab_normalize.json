@@ -1,0 +1,40 @@
+{
+  "off": {
+    "gate": {
+      "recall": 0.5159,
+      "precision": 0.8054,
+      "f1": 0.629,
+      "balanced_accuracy": 0.6442,
+      "total_reduction_pct": 64.41
+    },
+    "models": {
+      "rule_gate_confidence": 0.7146,
+      "logistic_regression": 0.8457,
+      "gradient_boosting": 0.8593
+    },
+    "roc_auc": {
+      "rule_gate_confidence": 0.7186,
+      "logistic_regression": 0.7835,
+      "gradient_boosting": 0.8015
+    }
+  },
+  "on": {
+    "gate": {
+      "recall": 0.5101,
+      "precision": 0.7892,
+      "f1": 0.6197,
+      "balanced_accuracy": 0.6307,
+      "total_reduction_pct": 64.09
+    },
+    "models": {
+      "rule_gate_confidence": 0.721,
+      "logistic_regression": 0.7469,
+      "gradient_boosting": 0.8449
+    },
+    "roc_auc": {
+      "rule_gate_confidence": 0.7175,
+      "logistic_regression": 0.7377,
+      "gradient_boosting": 0.789
+    }
+  }
+}

@@ -40,6 +40,7 @@ SWEEP_GRID: dict[str, Sequence[float]] = {
     "ndbi_strong_min": (0.04, 0.08, 0.14, 0.25),
     "ndvi_delta_mean_min": (0.02, 0.05, 0.10),
     "ndbi_delta_mean_min": (0.02, 0.05, 0.10),
+    "urbanization_score_min": (0.05, 0.10, 0.20),
 }
 
 
@@ -89,11 +90,11 @@ def sweep(
     eval_cities = {t.city for t in all_tiles if t.split != split}
     assert_disjoint(train_cities, eval_cities)
 
-    # adaptive_percentile changes the change mask itself, so it changes the
+    # background_sigma changes the change mask itself, so it changes the
     # features. It is swept in the outer loop where features are recomputed;
     # the remaining axes only affect the decision and reuse cached features.
     grid = dict(grid)
-    percentiles = list(grid.pop("background_sigma", (settings.gate.background_sigma,)))
+    sigmas = list(grid.pop("background_sigma", (settings.gate.background_sigma,)))
     keys = list(grid)
 
     baseline_rows = compute_tile_features(oscd_root, tiles, settings)
@@ -106,13 +107,13 @@ def sweep(
 
     best: SweepResult | None = None
     n_evaluated = 0
-    for pct in percentiles:
+    for sigma in sigmas:
         feature_settings = settings.model_copy(
-            update={"gate": settings.gate.model_copy(update={"background_sigma": pct})}
+            update={"gate": settings.gate.model_copy(update={"background_sigma": sigma})}
         )
         rows = (
             baseline_rows
-            if pct == settings.gate.background_sigma
+            if sigma == settings.gate.background_sigma
             else compute_tile_features(oscd_root, tiles, feature_settings)
         )
         for combo in itertools.product(*(grid[k] for k in keys)):

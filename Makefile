@@ -1,4 +1,4 @@
-.PHONY: help setup lint format type test test-all cov data demo tune eval e2e baselines figures controls docker docker-demo clean
+.PHONY: help setup lint format type test test-all test-oscd cov data demo tune eval e2e baselines vlm-report figures controls docker docker-demo clean
 
 PY ?= python
 VENV ?= .venv
@@ -16,12 +16,12 @@ setup: ## Create the venv and install with dev extras
 	$(BIN)/python -m pip install -e ".[dev]"
 
 lint: ## Run ruff (lint + format check)
-	$(BIN)/ruff check src tests
-	$(BIN)/ruff format --check src tests
+	$(BIN)/ruff check src tests scripts
+	$(BIN)/ruff format --check src tests scripts
 
 format: ## Auto-fix lint and formatting
-	$(BIN)/ruff check --fix src tests
-	$(BIN)/ruff format src tests
+	$(BIN)/ruff check --fix src tests scripts
+	$(BIN)/ruff format src tests scripts
 
 type: ## Type-check with mypy
 	$(BIN)/mypy
@@ -31,6 +31,9 @@ test: ## Run the offline test suite (no network, no API spend)
 
 test-all: ## Include dataset-dependent tests (requires `make data`)
 	$(BIN)/pytest -m "not vlm"
+
+test-oscd: ## Only the tests that need the real dataset on disk
+	$(BIN)/pytest -m oscd
 
 cov: ## Offline tests with a coverage report
 	$(BIN)/pytest --cov=satchangegate --cov-report=term-missing --cov-report=html
@@ -57,6 +60,9 @@ endif
 baselines: ## Compare the rule gate against learned models (needs .[baseline])
 	$(BIN)/satchangegate baselines
 
+vlm-report: ## Recompute the second-tier figures from the e2e ledger (no API calls)
+	$(BIN)/satchangegate vlm-report --split test
+
 figures: ## Regenerate the README figures
 	$(BIN)/python scripts/make_figures.py
 
@@ -66,7 +72,7 @@ controls: ## Offline control battery
 docker: ## Build the container
 	docker build -t satchangegate:latest .
 
-docker-demo: ## Run the fixture demo inside the container
+docker-demo: ## Check the container's config resolves from the wheel
 	docker run --rm satchangegate:latest verify || true
 
 clean: ## Remove caches and generated reports

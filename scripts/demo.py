@@ -58,7 +58,9 @@ def main() -> int:
     print()
     print("Tier 0 masks were computed from real multispectral bands, registration")
     print("was measured (not hardcoded), and the report is a labelled offline template.")
-    print(f"\n{'PASS' if not failures else 'FAIL'}: {len(pairs) - failures}/{len(pairs)} as expected")
+    print(
+        f"\n{'PASS' if not failures else 'FAIL'}: {len(pairs) - failures}/{len(pairs)} as expected"
+    )
     return 1 if failures else 0
 
 

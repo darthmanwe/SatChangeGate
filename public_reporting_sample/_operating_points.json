@@ -1,0 +1,55 @@
+{
+  "split": "test",
+  "n_scored": 534,
+  "n_positive": 345,
+  "cost_per_call_usd": 0.004689,
+  "cost_source": "measured from the recorded run ledger",
+  "review_everything_usd": 2.5039,
+  "operating_points": [
+    {
+      "budget_usd": 0.25,
+      "affordable_calls": 53,
+      "threshold": 0.4822,
+      "n_flagged": 53,
+      "recall": 0.0986,
+      "precision": 0.6415,
+      "spend_usd": 0.2485
+    },
+    {
+      "budget_usd": 0.5,
+      "affordable_calls": 106,
+      "threshold": 0.4329,
+      "n_flagged": 106,
+      "recall": 0.2203,
+      "precision": 0.717,
+      "spend_usd": 0.497
+    },
+    {
+      "budget_usd": 1.0,
+      "affordable_calls": 213,
+      "threshold": 0.3172,
+      "n_flagged": 213,
+      "recall": 0.487,
+      "precision": 0.7887,
+      "spend_usd": 0.9988
+    },
+    {
+      "budget_usd": 2.0,
+      "affordable_calls": 426,
+      "threshold": 0.1775,
+      "n_flagged": 426,
+      "recall": 0.8812,
+      "precision": 0.7136,
+      "spend_usd": 1.9975
+    },
+    {
+      "budget_usd": 5.0,
+      "affordable_calls": 534,
+      "threshold": 0.06,
+      "n_flagged": 534,
+      "recall": 1.0,
+      "precision": 0.6461,
+      "spend_usd": 2.5039
+    }
+  ]
+}

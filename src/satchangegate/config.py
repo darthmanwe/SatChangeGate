@@ -13,7 +13,7 @@ import os
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,6 +80,18 @@ class QualityThresholds(_Base):
     registration_error_px_max: float = 1.5
 
 
+class PreprocessSettings(_Base):
+    """Optional corrections applied before any index is differenced."""
+
+    # Relative radiometric normalization via pseudo-invariant features. Off by
+    # default: it is a real intervention on the input, and whether it helps on a
+    # given benchmark is an empirical question, not an assumption. Compare the
+    # precision-recall curves with it on and off before enabling it anywhere.
+    normalize: bool = False
+    pif_iterations: int = 3
+    pif_invariant_percentile: float = 60.0
+
+
 class GateThresholds(_Base):
     """Classical change-gate decision thresholds.
 
@@ -99,6 +111,19 @@ class GateThresholds(_Base):
 
     ssim_no_change_min: float = 0.65
     phash_no_change_max: int = 16
+
+    # Directional evidence. NDBI up while NDVI goes down is the physically
+    # correct signature of urban change, and the gate previously could not
+    # express it: `decide` read only absolute index deltas, which erase sign, so
+    # construction and demolition looked identical to it.
+    urbanization_score_min: float = 0.10
+    # Concentrated evidence. A tile whose mean delta is unremarkable but whose
+    # upper tail is decisive is exactly the "one new building in a quiet tile"
+    # case that a mean-only feature vector cannot see.
+    magnitude_p95_min: float = 0.20
+    # Minimum size of the single largest contiguous changed region. Real change
+    # is contiguous; what survives despeckling otherwise tends to be seams.
+    min_largest_component_px: int = 64
 
     # Per-pixel change-mask thresholding.
     #
@@ -132,10 +157,34 @@ class GateThresholds(_Base):
     open_radius_px: int = 1
 
 
+class ScorerSettings(_Base):
+    """Which Tier-1 scorer runs.
+
+    Deliberately not a field on ``GateThresholds``: everything in that model is a
+    threshold read by ``decide``, and a test asserts exactly that so a dead
+    config key cannot reappear. This is a runtime mode, not a threshold.
+
+    ``rules`` stays the default. The learned scorer measurably wins on accuracy
+    (+0.14 average precision on held-out cities), and the rules still win on
+    properties that are worth real money to a spend-control filter: every
+    decision returns the rule that fired, there is no runtime dependency, and
+    there is no model artifact to version, retrain, or watch drift. The point of
+    this setting is that the trade is now the operator's to make.
+    """
+
+    kind: Literal["rules", "learned"] = "rules"
+    path: str = "data/models/gate_scorer.pkl"
+    # Operating point for the learned scorer. `satchangegate conformal` can pick
+    # this with a distribution-free guarantee instead of by eye.
+    threshold: float = 0.5
+
+
 class Settings(_Base):
     masks: MaskThresholds = Field(default_factory=MaskThresholds)
     quality: QualityThresholds = Field(default_factory=QualityThresholds)
     gate: GateThresholds = Field(default_factory=GateThresholds)
+    preprocess: PreprocessSettings = Field(default_factory=PreprocessSettings)
+    scorer: ScorerSettings = Field(default_factory=ScorerSettings)
     bands: tuple[str, ...] = GATE_BANDS
     rgb_bands: tuple[str, ...] = RGB_BANDS
 

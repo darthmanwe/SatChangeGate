@@ -1,6 +1,6 @@
 """Learned baselines against the hand-written gate.
 
-The gate is three documented rules over eleven numeric features, with
+The gate is six documented rules over eighteen numeric features, with
 grid-tuned thresholds. The obvious question is why those features are not
 simply fed to a classifier — so this module answers it rather than leaving it
 open. Logistic regression and gradient boosting are fitted on the same train
@@ -46,6 +46,14 @@ FEATURE_NAMES = (
     "ndwi_delta_abs_mean",
     "cva_magnitude_mean",
     "changed_area_percent",
+    "ndvi_delta_p10",
+    "ndbi_delta_p90",
+    "urbanization_score",
+    "magnitude_p95",
+    "magnitude_p99",
+    "largest_component_px",
+    "n_components",
+    "component_fill_ratio",
 )
 
 

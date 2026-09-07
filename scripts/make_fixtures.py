@@ -99,8 +99,9 @@ def build() -> Path:
 
     # City with no change: an independent noise draw only.
     stable_t1 = _base_scene(rng)
-    stable_t2 = {b: a + rng.normal(0.0, 0.004, a.shape).astype(np.float32)
-                 for b, a in stable_t1.items()}
+    stable_t2 = {
+        b: a + rng.normal(0.0, 0.004, a.shape).astype(np.float32) for b, a in stable_t1.items()
+    }
     _write_bands(stable_t1, root / "stableton" / "imgs_1_rect")
     _write_bands(stable_t2, root / "stableton" / "imgs_2_rect")
     _write_label(np.zeros((SIZE, SIZE), dtype=np.uint8), root / "stableton" / "cm")
