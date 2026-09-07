@@ -10,9 +10,11 @@ branches, but with a per-pixel change mask and no despeckling the "area" term
 was true for nearly every pair and the "structural" term was true for nearly
 every multi-year pair, so most branches collapsed onto a single spectral
 threshold. Two of the remaining branches were carve-outs whose constants sat
-between two individual observed tiles. What follows is three documented rules
+between two individual observed tiles. What follows is six documented rules
 with a monotonicity guarantee: adding evidence never moves a pair from
-``candidate_change`` back to ``no_change``.
+``candidate_change`` back to ``no_change``. Two of the six were added once the
+gate began reading the *signed* index deltas it had always computed and never
+consulted.
 """
 
 from __future__ import annotations
