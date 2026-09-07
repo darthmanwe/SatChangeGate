@@ -39,6 +39,7 @@ coverage.xml
 # so a future docs/ page of the same name is not silently swallowed.
 /project_status.md
 /LINKEDIN.md
+/STUDY_GUIDE.md
 
 # OS
 .DS_Store

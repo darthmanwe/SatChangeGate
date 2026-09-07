@@ -12,6 +12,24 @@ Two conventions specific to this project:
 - **Negative results are entries too.** Something measured and rejected is a
   result. It belongs here, not only in the commit that deleted it.
 
+## [Unreleased]
+
+### Corrected
+
+- **The 0.3.0 rule-count fix was incomplete.** "three documented rules" was
+  corrected in `baseline.py` but a second occurrence in
+  `features/classical.py`'s module docstring was missed, so the file that
+  *defines* the rules still described three of them. The changelog entry claimed
+  the fix generally. Now corrected there too, with a note that two of the six
+  arrived once the gate began reading its own signed deltas.
+- The 0.3.0 entry recorded the ROC AUC correction as "0.802". The value shipped
+  is **0.801**, matching the generated baselines table; 0.802 was a rounding of
+  0.8015 that disagreed with the artifact beside it. The entry now says 0.801.
+
+Both are small, and both are the drift this project exists to catch: a
+correction that names one occurrence of a stale figure and leaves another, and a
+changelog line quoting a number the repo does not print.
+
 ## [0.3.0] — 2026-08-30
 
 Stage 1 of a staged advancement plan: **measurement integrity first, then gate
@@ -114,8 +132,9 @@ Two structural gaps sat behind them:
 - Pixel-level metrics published as precision / recall / F1 / IoU / specificity
   over 2.40 M observed pixels, rather than a single F1 with no provenance.
 - Stale figures corrected in the prose: "eleven numeric features" (eighteen),
-  "ROC AUC 0.805" (0.802), "five rules" and "three documented rules" (six), and
-  an audit table introduced as five rows that had six.
+  "ROC AUC 0.805" (0.801, matching the generated table), "five rules" and
+  "three documented rules" (six), and an audit table introduced as five rows
+  that had six.
 - The `thresholds.yaml` provenance comment still carried the conflated "gate
   filters 64.6%" claim in the very file that produces the number. Corrected.
 
