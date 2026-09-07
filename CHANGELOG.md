@@ -119,6 +119,25 @@ Two structural gaps sat behind them:
 - The `thresholds.yaml` provenance comment still carried the conflated "gate
   filters 64.6%" claim in the very file that produces the number. Corrected.
 
+### Fixed before release
+
+Found by reviewing this release's own diff, in code that had not shipped:
+
+- **`--max-vlm-calls` was not a hard cap.** The stratified sampler's floor of one
+  call per city was applied unconditionally, so a budget below the number of
+  cities returned one tile *per city* instead: `--max-vlm-calls 1` selected 9
+  calls on the held-out split. The budget now dominates the floor and spends on
+  the largest contributors. No published figure changes — the documented run used
+  a budget of 100 and its per-city allocation is byte-identical — but a user
+  trying a single call would have paid for nine.
+  The cap test that existed asserted only at budget = 13 against a five-city
+  pool, which is the safe side of the boundary; it now sweeps every budget.
+- **`pixel_metrics()` scored F1 and IoU over different pixel populations** — the
+  confusion matrix was restricted to observed pixels while IoU was computed from
+  the raw arrays, so masked-out cloud reached one number and not the other. Both
+  now derive from the same masked matrix. The published pixel figures come from
+  `run_eval`'s accumulator, which was already consistent, so they are unaffected.
+
 ### Measured and rejected
 
 - **Threshold refitting found nothing better than what was already shipped.**

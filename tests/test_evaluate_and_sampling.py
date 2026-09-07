@@ -133,6 +133,29 @@ class TestPixelMetrics:
         with pytest.raises(ValueError, match="shape mismatch"):
             pixel_confusion(np.zeros((4, 4), bool), np.zeros((5, 5), bool))
 
+    def test_f1_and_iou_score_the_same_pixels(self) -> None:
+        """Both figures must come from the observed population, not one each.
+
+        ``pixel_metrics`` used to mask the confusion matrix by ``valid`` and then
+        compute IoU from the raw arrays, so a dict reporting F1 over observed
+        pixels reported IoU over all of them.
+        """
+        pred = np.zeros((4, 4), dtype=bool)
+        gt = np.zeros((4, 4), dtype=bool)
+        valid = np.zeros((4, 4), dtype=bool)
+        valid[0, :] = True
+        pred[0, :2] = True  # observed: 2 TP
+        gt[0, :2] = True
+        # Unobserved disagreement that must not reach either number.
+        pred[3, :] = True
+        gt[2, :] = True
+
+        out = pixel_metrics(pred, gt, valid)
+        assert out["n"] == 4
+        assert out["confusion"] == {"tp": 2, "fp": 0, "fn": 0, "tn": 2}
+        assert out["f1"] == 1.0
+        assert out["iou"] == 1.0  # 0.25 if the unobserved rows leaked in
+
 
 class TestCandidateSelection:
     """Regression for the sample that was actually an alphabetical truncation."""
@@ -188,8 +211,28 @@ class TestCandidateSelection:
 
     @pytest.mark.parametrize("strategy", SAMPLE_STRATEGIES)
     def test_never_exceeds_the_budget(self, strategy: str) -> None:
-        """The cap is a spend limit; overshooting it costs real money."""
-        assert len(select_candidates(self._pool(), 13, strategy=strategy)) <= 13
+        """The cap is a spend limit; overshooting it costs real money.
+
+        Swept across every budget rather than probed at one value. The earlier
+        version of this test asserted only at budget=13 against a five-city pool,
+        which is on the safe side of the boundary: the per-city floor of one call
+        could only breach the cap when the budget was *below* the number of
+        cities, and at 13 it never was. Stratified sampling therefore returned
+        five tile ids for a budget of one -- past a flag documented as a hard cap
+        -- with a green test suite.
+        """
+        pool = self._pool()
+        for budget in range(1, len(pool) + 3):
+            chosen = select_candidates(pool, budget, strategy=strategy)
+            assert len(chosen) <= budget, f"{strategy} overspent at budget={budget}"
+            assert len(chosen) == len(set(chosen)), f"{strategy} duplicated a tile"
+
+    def test_a_budget_smaller_than_the_city_count_favours_big_contributors(self) -> None:
+        """The floor yields to the cap, and it yields predictably."""
+        chosen = select_candidates(self._pool(), 2, strategy="stratified", seed=42)
+        assert len(chosen) == 2
+        # delta (70) and beta (49) are the two largest pools.
+        assert {t.split("_t")[0] for t in chosen} == {"delta", "beta"}
 
 
 class TestVlmReport:

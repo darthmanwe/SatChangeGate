@@ -196,7 +196,11 @@ def pixel_metrics(pred: Any, gt: Any, valid: Any = None) -> dict[str, Any]:
     """
     cm = pixel_confusion(pred, gt, valid)
     out = cm.to_dict()
-    out["iou"] = round(iou(pred, gt), 4)
+    # Derived from the same masked matrix as every other figure here. Calling
+    # ``iou(pred, gt)`` instead would score IoU over the *unobserved* pixels too
+    # while F1 excluded them, so the two numbers in one dict would describe
+    # different pixel populations.
+    out["iou"] = round(cm.tp / max(1, cm.tp + cm.fp + cm.fn), 4)
     return out
 
 

@@ -94,6 +94,14 @@ def select_candidates(
     sum exactly to the budget. Every city with at least one candidate gets at
     least one call, because a city absent from the sample cannot be said to have
     been measured at all.
+
+    **The budget wins over that floor.** When the budget is smaller than the
+    number of cities the floor cannot be honoured for all of them, and the cap is
+    a spend guarantee while the floor is a representativeness preference. In that
+    case the budget goes to the cities that contributed the most candidates, one
+    call each. An earlier version gave every city its floor call unconditionally
+    and so returned ``n_cities`` tile ids for a budget of one -- a 9x overspend on
+    this benchmark, on the flag documented as a hard cap.
     """
     if strategy not in SAMPLE_STRATEGIES:
         raise ValueError(
@@ -113,6 +121,14 @@ def select_candidates(
 
     total = len(ids)
     cities = sorted(by_city)
+
+    if budget < len(cities):
+        # Cannot give every city a call. Spend the budget on the largest
+        # contributors rather than exceeding the cap.
+        ranked = sorted(cities, key=lambda c: (-len(by_city[c]), c))[:budget]
+        rng = random.Random(seed)
+        return sorted(rng.choice(sorted(by_city[c])) for c in ranked)
+
     # Largest-remainder apportionment, with a floor of one call per city so no
     # city silently drops out of the measured set.
     exact = {c: budget * len(by_city[c]) / total for c in cities}
