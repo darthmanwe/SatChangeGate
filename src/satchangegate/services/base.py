@@ -53,11 +53,14 @@ class ServiceRequest(BaseModel):
 
         argv = [self.command_name]
         for name, value in self.model_dump().items():
-            if name in self.location_fields and not include_locations:
+            is_location = name in self.location_fields
+            if is_location and not include_locations:
                 continue
             if value is None:
                 continue
-            if self._is_default(name, value):
+            # A location asked for is a location shown, default or not: the
+            # reason to ask is to see where a run actually wrote.
+            if not is_location and self._is_default(name, value):
                 continue
             flag = self.cli_flags.get(name)
             if flag is None:

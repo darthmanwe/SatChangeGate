@@ -462,7 +462,10 @@ synthetic pairs it recovers a known gain and offset almost exactly, drives the
 residual on unchanged ground to zero, and leaves genuine change intact.
 
 **On OSCD it makes things worse, so it ships off by default.** Same features,
-same split, the only difference being whether t2 is gain/offset-matched to t1:
+same split, the only difference being whether t2 is gain/offset-matched to t1.
+Reproduce with `satchangegate ab-normalize --split test` — a command this table
+went without until September 2026, which made it an assertion rather than a
+result no matter how honest its conclusion was:
 
 | | Normalization off | on | Δ |
 |---|---|---|---|
@@ -550,6 +553,7 @@ satchangegate operating-points       # what each review budget buys
 satchangegate fit-scorer             # persist the learned scorer + model card
 satchangegate baselines              # rule gate vs learned models
 satchangegate embedding-coverage     # what AlphaEarth can speak to here
+satchangegate ab-normalize           # the radiometric normalization A/B
 satchangegate dev-tests              # offline control battery
 satchangegate verify                 # check dataset + config
 satchangegate run-images --t1 a --t2 b  # your own pair, under a declared contract

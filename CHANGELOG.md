@@ -110,6 +110,19 @@ change was made, and all four are now covered by a failing-first test.
   blank cheque for an authorisation. Money is integer micro-dollars, holds
   survive a restart, and an outcome nobody knows keeps its reservation, because
   a request that timed out may still have been served.
+- **`satchangegate ab-normalize`** — the producing command
+  `public_reporting_sample/_ab_normalize.json` never had. It was committed from
+  0.3.0 with nothing that could regenerate it, which is the same defect class as
+  a headline number with no code path; a negative result is not exempt. The
+  regenerated artifact reproduces the committed one to four decimals apart from
+  the rule-gate AP, which moved exactly as the `urbanization_score_min` adoption
+  predicted.
+- **`--thresholds`** on every scoring operation, so the threshold playground's
+  export is a file something can actually consume rather than a suggestion.
+- A batch-manifest viewer, and a scorer-parity report that states plainly which
+  code paths honour `scorer.kind` and which always run the rules — `eval`
+  dispatches, `run` and `e2e` call `decide` directly, and comparing across the
+  two would be comparing different models.
 - `--stride` and `--pos-min-fraction` on `tiles`, and `--overwrite` on `e2e`.
 
 ### Changed

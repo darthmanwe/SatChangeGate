@@ -169,6 +169,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
         return {
             "provenance": provenance(get_settings()),
+            "scorer": _scorer_status(),
             "present": present,
             "spend": {
                 "allowed": config.allow_spend,
@@ -529,6 +530,51 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         except IngestRefused as exc:
             raise HTTPException(404, str(exc)) from None
         return {"discarded": upload_id}
+
+    @app.get("/api/batches")
+    def batches() -> dict[str, Any]:
+        """Batch manifests on disk, and what they mean for spending again.
+
+        A manifest exists because a batch was submitted, and a submitted batch
+        has already been paid for. Reading one before doing anything is the
+        difference between rejoining work and buying it twice.
+        """
+        import json as _json
+
+        reports = Path(config.reports or "data/reports")
+        found = []
+        for path in sorted(reports.glob("_e2e_*_batch.json")):
+            entry: dict[str, Any] = {"path": str(path), "readable": True}
+            try:
+                blob = _json.loads(path.read_text(encoding="utf-8"))
+                entry.update(
+                    {
+                        "batch_id": blob.get("batch_id"),
+                        "model": blob.get("model"),
+                        "split": blob.get("split"),
+                        "n_tiles": len(blob.get("tile_ids") or []),
+                    }
+                )
+            except (ValueError, OSError) as exc:
+                entry.update({"readable": False, "error": str(exc)})
+            found.append(entry)
+        unreadable = [e for e in found if not e["readable"]]
+        return {
+            "manifests": found,
+            "note": (
+                "A manifest records a batch that was already paid for at submission. "
+                "A rerun reattaches to it rather than resubmitting; never submit one "
+                "by hand."
+            ),
+            "warning": (
+                "One or more manifests cannot be read. The funnel now refuses to "
+                "submit over an unreadable manifest rather than assuming there is "
+                "no batch, because assuming that buys the same work twice. Inspect "
+                "or collect them before running again."
+                if unreadable
+                else None
+            ),
+        }
 
     # ------------------------------------------------------------------ spend
 
@@ -984,6 +1030,57 @@ _LEDGER_FIELDS = (
     "cost_usd",
     "error",
 )
+
+
+def _scorer_status() -> dict[str, Any]:
+    """Which scorer is configured, and which code paths actually honour it.
+
+    ``evaluate.score_rows`` dispatches between the rules and the learned model.
+    ``classical_gate`` and ``_gate_pass`` call ``decide`` directly and always
+    run the rules. A single global toggle would therefore show learned metrics
+    beside a funnel that ran the rules, so the honest move -- short of unifying
+    the two, which is a larger change than this milestone -- is to say plainly
+    where the setting applies and where it does not.
+    """
+    from satchangegate.config import get_settings
+
+    settings = get_settings()
+    kind = settings.scorer.kind
+    status: dict[str, Any] = {
+        "configured": kind,
+        "threshold": settings.scorer.threshold,
+        "honoured_by": ["eval", "conformal", "operating-points", "baselines"],
+        "always_uses_rules": ["run", "run-images", "e2e", "dev-tests"],
+        "caveat": (
+            "The single-pair and funnel paths call decide() directly, so they run "
+            "the rule gate whatever this is set to. Comparing a learned metric "
+            "against a funnel figure would be comparing two different models."
+        ),
+        "artifact": None,
+    }
+    if kind != "learned":
+        return status
+    try:
+        from satchangegate.scorer import load_scorer
+
+        artifact = load_scorer(Path(settings.scorer.path))
+        status["artifact"] = {
+            "loaded": True,
+            "model": getattr(artifact, "model_name", None) or type(artifact).__name__,
+            "feature_hash": getattr(artifact, "feature_hash", None),
+        }
+    except Exception as exc:
+        # A stale artifact makes evaluate fall back to the rules with a
+        # RuntimeWarning nobody sees. Surfacing it is the point.
+        status["artifact"] = {
+            "loaded": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "consequence": (
+                "Scoring silently falls back to the rule gate. Any metric labelled "
+                "'learned' while this is true would be mislabelled."
+            ),
+        }
+    return status
 
 
 def _spent_usd(result: dict[str, Any] | None) -> float:

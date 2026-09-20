@@ -9,6 +9,7 @@ from __future__ import annotations
 from satchangegate.services.base import ServiceRequest
 from satchangegate.services.operations import (
     SERVICES,
+    AbNormalizeRequest,
     BaselinesRequest,
     ConformalRequest,
     DevTestsRequest,
@@ -32,6 +33,7 @@ from satchangegate.services.operations import (
 
 __all__ = [
     "SERVICES",
+    "AbNormalizeRequest",
     "BaselinesRequest",
     "ConformalRequest",
     "DevTestsRequest",

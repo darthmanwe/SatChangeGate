@@ -176,6 +176,7 @@ class RunImagesRequest(ServiceRequest):
 class EvalRequest(ServiceRequest):
     command_name: ClassVar[str] = "eval"
     cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
         "split": "--split",
         "root": "--root",
         "out": "--out",
@@ -186,19 +187,33 @@ class EvalRequest(ServiceRequest):
     root: Path = Field(default_factory=default_oscd_root)
     out: Path = REPORTS
     pixel_metrics: bool = False
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class TuneRequest(ServiceRequest):
     command_name: ClassVar[str] = "tune"
-    cli_flags: ClassVar[dict[str, str]] = {"split": "--split", "root": "--root", "out": "--out"}
+    cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
+        "split": "--split",
+        "root": "--root",
+        "out": "--out",
+    }
     split: Split = "train"
     root: Path = Field(default_factory=default_oscd_root)
     out: Path = REPORTS
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class E2ERequest(ServiceRequest):
     command_name: ClassVar[str] = "e2e"
     cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
         "split": "--split",
         "n": "--n",
         "seed": "--seed",
@@ -223,6 +238,10 @@ class E2ERequest(ServiceRequest):
     batch: bool = False
     resume: bool = False
     overwrite: bool = False
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class VlmReportRequest(ServiceRequest):
@@ -234,9 +253,17 @@ class VlmReportRequest(ServiceRequest):
 
 class BaselinesRequest(ServiceRequest):
     command_name: ClassVar[str] = "baselines"
-    cli_flags: ClassVar[dict[str, str]] = {"root": "--root", "out": "--out"}
+    cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
+        "root": "--root",
+        "out": "--out",
+    }
     root: Path = Field(default_factory=default_oscd_root)
     out: Path = REPORTS
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class FitScorerRequest(ServiceRequest):
@@ -247,9 +274,34 @@ class FitScorerRequest(ServiceRequest):
     out: Path = Path("data/models/gate_scorer.pkl")
 
 
+class AbNormalizeRequest(ServiceRequest):
+    """The radiometric-normalization A/B.
+
+    Exists because its artifact was committed with no producing command, which
+    is the same defect class as a headline number nobody could regenerate. A
+    negative result is not exempt from needing one.
+    """
+
+    command_name: ClassVar[str] = "ab-normalize"
+    cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
+        "split": "--split",
+        "root": "--root",
+        "out": "--out",
+    }
+    split: Split = "test"
+    root: Path = Field(default_factory=default_oscd_root)
+    out: Path = REPORTS
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
+
+
 class ConformalRequest(ServiceRequest):
     command_name: ClassVar[str] = "conformal"
     cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
         "root": "--root",
         "out": "--out",
         "alpha": "--alpha",
@@ -259,11 +311,16 @@ class ConformalRequest(ServiceRequest):
     out: Path = REPORTS
     alpha: float = Field(0.20, gt=0.0, lt=1.0)
     delta: float = Field(0.10, gt=0.0, lt=1.0)
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class OperatingPointsRequest(ServiceRequest):
     command_name: ClassVar[str] = "operating-points"
     cli_flags: ClassVar[dict[str, str]] = {
+        "thresholds": "--thresholds",
         "split": "--split",
         "root": "--root",
         "out": "--out",
@@ -275,6 +332,10 @@ class OperatingPointsRequest(ServiceRequest):
     out: Path = REPORTS
     budget_usd: tuple[float, ...] = (0.25, 0.50, 1.00, 2.00, 5.00)
     cost_per_call: float | None = Field(None, gt=0.0)
+    #: A thresholds YAML to score against instead of the shipped one. The
+    #: playground writes this shape; without a flag to apply it, an export
+    #: would be a file nothing could consume.
+    thresholds: Path | None = None
 
 
 class EmbeddingCoverageRequest(ServiceRequest):
@@ -293,6 +354,17 @@ class DevTestsRequest(ServiceRequest):
 
 
 # --------------------------------------------------------------------- runners
+
+
+def _settings_for(request: ServiceRequest) -> Any:
+    """Settings for this request: a declared thresholds file, or the shipped one.
+
+    ``get_settings`` is cached per path, so passing one here is cheap and cannot
+    leak into another request's view of the configuration.
+    """
+    from satchangegate.config import get_settings
+
+    return get_settings(getattr(request, "thresholds", None))
 
 
 def _result(request: ServiceRequest, data: dict[str, Any], *artifacts: Path) -> ServiceResult:
@@ -505,6 +577,7 @@ def run_eval_service(request: EvalRequest, __report: ProgressFn | None = None) -
         request.root,
         split=request.split,
         out_dir=request.out,
+        settings=_settings_for(request),
         pixel_metrics=request.pixel_metrics,
     )
     return _result(
@@ -518,7 +591,12 @@ def run_eval_service(request: EvalRequest, __report: ProgressFn | None = None) -
 def run_tune_service(request: TuneRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.tune_gate import sweep
 
-    best = sweep(request.root, split=request.split, out_dir=request.out)
+    best = sweep(
+        request.root,
+        split=request.split,
+        out_dir=request.out,
+        settings=_settings_for(request),
+    )
     return _result(
         request,
         {
@@ -538,6 +616,7 @@ def run_e2e_service(request: E2ERequest, report: ProgressFn | None = None) -> Se
     data = run_e2e(
         request.root,
         request.out,
+        settings=_settings_for(request),
         config=E2EConfig(
             split=request.split,
             n=request.n,
@@ -573,7 +652,7 @@ def run_baselines_service(
 ) -> ServiceResult:
     from satchangegate.baseline import run_baselines
 
-    data = run_baselines(request.root, request.out)
+    data = run_baselines(request.root, request.out, settings=_settings_for(request))
     return _result(request, data, request.out / "_baselines.json", request.out / "pr_curves.png")
 
 
@@ -623,12 +702,29 @@ def run_fit_scorer_service(
     )
 
 
+def run_ab_normalize_service(
+    request: AbNormalizeRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
+    from satchangegate.ab_normalize import run_ab_normalize
+
+    data = run_ab_normalize(
+        request.root, request.out, split=request.split, settings=_settings_for(request)
+    )
+    return _result(request, data, request.out / "_ab_normalize.json")
+
+
 def run_conformal_service(
     request: ConformalRequest, _report: ProgressFn | None = None
 ) -> ServiceResult:
     from satchangegate.conformal import run_conformal
 
-    data = run_conformal(request.root, request.out, alpha=request.alpha, delta=request.delta)
+    data = run_conformal(
+        request.root,
+        request.out,
+        alpha=request.alpha,
+        delta=request.delta,
+        settings=_settings_for(request),
+    )
     return _result(request, data, request.out / "_conformal.json")
 
 
@@ -643,6 +739,7 @@ def run_operating_points_service(
         split=request.split,
         cost_per_call_usd=request.cost_per_call,
         budgets_usd=tuple(request.budget_usd),
+        settings=_settings_for(request),
     )
     return _result(request, data, request.out / "_operating_points.json")
 
@@ -815,6 +912,14 @@ SERVICES: dict[str, ServiceSpec] = {
             FitScorerRequest,
             run_fit_scorer_service,
             "Fit and persist the learned scorer, with a model card.",
+            "long",
+            requires=("dataset", "baseline-extra"),
+        ),
+        ServiceSpec(
+            "ab-normalize",
+            AbNormalizeRequest,
+            run_ab_normalize_service,
+            "Evaluate the gate and the baselines with PIF normalization off, then on.",
             "long",
             requires=("dataset", "baseline-extra"),
         ),

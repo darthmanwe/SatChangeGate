@@ -599,6 +599,53 @@ def dev_tests_cmd(
         raise typer.Exit(1)
 
 
+@app.command("ab-normalize")
+def ab_normalize_cmd(
+    split: str = typer.Option("test", "--split"),
+    root: Path = typer.Option(default_oscd_root(), "--root"),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+) -> None:
+    """Evaluate with PIF radiometric normalization off, then on, and compare.
+
+    Closes a gap this repo should not have had: `_ab_normalize.json` was
+    committed from 0.3.0 with nothing that could regenerate it. A negative
+    result nobody can reproduce is an assertion, not a result.
+
+    Expensive -- two full feature passes and two baseline fits.
+    """
+    from satchangegate.ab_normalize import run_ab_normalize
+
+    console.print("[dim]Two full evaluations. This takes a while.[/dim]")
+    summary = run_ab_normalize(root, out, split=split)
+    off, on, delta = summary["off"], summary["on"], summary["delta_on_minus_off"]
+
+    table = Table(title=f"PIF normalization A/B — {split}")
+    for col in ("metric", "off", "on", "delta"):
+        table.add_column(col)
+    table.add_row(
+        "gate F1",
+        f"{off['gate']['f1']:.4f}",
+        f"{on['gate']['f1']:.4f}",
+        f"{delta['gate_f1']:+.4f}",
+    )
+    table.add_row(
+        "gate precision",
+        f"{off['gate']['precision']:.4f}",
+        f"{on['gate']['precision']:.4f}",
+        f"{delta['gate_precision']:+.4f}",
+    )
+    for name in off["models"]:
+        table.add_row(
+            f"{name} AP",
+            f"{off['models'][name]:.4f}",
+            f"{on['models'][name]:.4f}",
+            f"{delta[f'{name}_ap']:+.4f}",
+        )
+    console.print(table)
+    console.print(f"[dim]{summary['reading']}[/dim]")
+    console.print(f"[dim]Report: {out / '_ab_normalize.md'}[/dim]")
+
+
 @app.command("run-images")
 def run_images_cmd(
     t1: Path = typer.Option(..., "--t1", help="Before image."),
