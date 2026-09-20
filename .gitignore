@@ -45,3 +45,6 @@ coverage.xml
 .DS_Store
 Thumbs.db
 *.log
+
+# Local review documents, not part of the published repo.
+docs/reviews/

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="scg-token" content="{{SESSION_TOKEN}}">
+<title>SatChangeGate</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <strong>SatChangeGate</strong>
+      <span class="sub">cost-controlled change-detection funnel</span>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <div class="topbar-right">
+    <span class="chip" id="spend-chip" title="Live API spend for this session">$0.0000</span>
+    <button class="ghost" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main id="view" class="view" tabindex="-1"></main>
+
+<footer class="statusbar">
+  <span id="status-left" class="mono"></span>
+  <span id="status-right" class="mono"></span>
+</footer>
+
+<template id="tpl-command">
+  <div class="command" title="The command that produces exactly what is shown here">
+    <span class="command-label">produced by</span>
+    <code class="command-text"></code>
+    <button class="ghost copy" title="Copy">copy</button>
+  </div>
+</template>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

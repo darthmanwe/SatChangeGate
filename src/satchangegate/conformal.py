@@ -540,6 +540,20 @@ def _render(s: dict[str, Any]) -> str:
         "cities, same alpha, the only difference being whether the predictor had "
         "seen them:",
         "",
+    ]
+    if pr["matches_shipped_thresholds"]:
+        lines += [
+            "**This comparison is degenerate in the current configuration, and that "
+            "is the good outcome.** The refit reproduced the shipped thresholds "
+            "exactly, so both columns below score with the same gate and agree by "
+            "construction. What was contaminated was the *provenance* of those "
+            "thresholds -- fitted on fourteen cities including the four that then "
+            "certified them -- not their values. A fit that excluded the "
+            "calibration cities arrived at the same place independently, which is "
+            "why the guarantee can be claimed for the gate this repo ships.",
+            "",
+        ]
+    lines += [
         "| | Contaminated (superseded) | Corrected |",
         "|---|---|---|",
         f"| Lambda | {sc['lambda']} | {c['lambda']} |",

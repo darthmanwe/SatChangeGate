@@ -78,6 +78,30 @@ change was made, and all four are now covered by a failing-first test.
   on OSCD, whose rasters are fully populated, and a live hole for any uploaded
   scene carrying nodata.
 
+### Changed
+
+- **`urbanization_score_min` raised from a tie to a choice: 0.10 -> 0.05.** The
+  0.3.0 sweep reported 0.05 only because it comes first in the grid and scored
+  identically to 0.10, so the code default was kept and the provenance comment
+  said as much. The conformal correction above gave that tie a tiebreaker: a
+  calibrated guarantee needs a gate fitted without the calibration cities, and
+  that refit -- nine cities instead of fourteen -- independently chose 0.05.
+  Keeping 0.10 would have meant publishing a guarantee certifying a gate the repo
+  does not ship.
+
+  **Adoption is free on accuracy.** It moves zero gate decisions on the held-out
+  split; the confusion matrix is identical (TP 178 / FP 43 / FN 167 / TN 146,
+  precision 0.8054, recall 0.5159, F1 0.6290) and the funnel candidate set is
+  unchanged, so the 100 paid verifications remain valid. What moves is
+  `gate_confidence` on 136 of 621 tiles, all upward and by at most 0.058, which
+  shifts two published tables: the operating-point thresholds and the rule gate's
+  own PR curve (AP 0.715 -> 0.712, ROC AUC 0.719 -> 0.714). Both regenerated.
+
+  `satchangegate conformal` now reports `matches_shipped_thresholds: true`, and
+  says plainly that its contaminated-vs-corrected comparison is degenerate as a
+  result -- what had been contaminated was the *provenance* of those thresholds,
+  not their values.
+
 The common shape is worth naming: three of the four were invisible because
 something else masked them — a file-preference order, a dataset with no nodata,
 a score distribution that happened not to tie at the published budgets. A test

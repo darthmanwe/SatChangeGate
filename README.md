@@ -121,11 +121,20 @@ calibration set.
 Correcting it moved the numbers very little — λ is unchanged, the bound got
 *tighter* rather than looser (0.198 → 0.186), and held-out recall moved 0.823
 → 0.826 — so the previously published figures were not an artifact of the leak.
-That is now a measurement rather than an assumption: the command reports the old
-contaminated result alongside the corrected one. The refit differs from the
-shipped thresholds on a single axis, `urbanization_score_min` (0.10 → 0.05),
-which the tuning provenance already records as a **grid-order tie rather than
-evidence** — the same tie, resolving the same way, on a smaller set of cities.
+
+**The refit reproduced the shipped thresholds**, on one condition: it chose
+`urbanization_score_min` 0.05 where the config then carried 0.10. The tuning
+provenance already recorded that axis as a **grid-order tie rather than
+evidence**, and the nine-city refit landed on the same tie the fourteen-city
+sweep had. Keeping 0.10 would have meant publishing a guarantee that certifies a
+gate the repo does not ship, so 0.05 was adopted. Adoption moves **zero** gate
+decisions on the held-out split — the confusion matrix is identical — and what it
+does move is `gate_confidence` on 136 of 621 tiles, all upward, by at most 0.058.
+The operating-point thresholds and the rule-gate PR curve shift accordingly and
+are regenerated; the headline gate metrics do not move at all.
+
+So the guarantee below applies to the gate this repo actually ships, arrived at
+by a fit that excluded the cities certifying it.
 
 That failure is the point, not a defect. A conformal guarantee assumes
 calibration and deployment data are exchangeable, and a *geographic* split
@@ -147,13 +156,18 @@ A cost-control gate is chosen by its operating point, so the repo now ships the
 demand curve rather than a single point. Each row is the best recall a budget
 can reach and the threshold that reaches it:
 
-| Budget | Calls | Threshold | Recall | Precision |
-|---|---|---|---|---|
-| $0.25 | 53 | 0.482 | 0.099 | 0.641 |
-| $0.50 | 106 | 0.433 | 0.220 | 0.717 |
-| $1.00 | 213 | 0.317 | 0.487 | 0.789 |
-| $2.00 | 426 | 0.177 | 0.881 | 0.714 |
-| $5.00 | 534 | 0.060 | 1.000 | 0.646 |
+| Budget | Calls | Threshold | Flagged | Unused | Recall | Precision |
+|---|---|---|---|---|---|---|
+| $0.25 | 53 | 0.496 | 53 | 0 | 0.096 | 0.623 |
+| $0.50 | 106 | 0.437 | 106 | 0 | 0.226 | 0.736 |
+| $1.00 | 213 | 0.322 | 213 | 0 | 0.484 | 0.784 |
+| $2.00 | 426 | 0.187 | 426 | 0 | 0.873 | 0.707 |
+| $5.00 | 534 | 0.060 | 534 | 0 | 1.000 | 0.646 |
+
+The **Unused** column is new, and on these five budgets it is zero throughout.
+It exists because a tie group straddling the budget line is now excluded rather
+than admitted whole; where that happens, the budget goes partly unspent and the
+table says so instead of quietly overspending.
 
 Prices come from the measured batch rate ($0.004689 per verification), so the
 whole held-out split can be reviewed for $2.50. Precision peaks in the middle:
@@ -180,11 +194,11 @@ rather than leaving it open — same features, same split, same leakage assertio
 
 | Model | Average precision | ROC AUC | Precision @ the gate's recall |
 |---|---|---|---|
-| Rule gate (confidence swept) | 0.715 | 0.719 | 0.775 |
+| Rule gate (confidence swept) | 0.712 | 0.714 | 0.775 |
 | Logistic regression | 0.846 | 0.783 | 0.856 |
 | **Gradient boosting** | **0.859** | **0.801** | **0.883** |
 
-**Gradient boosting still wins** — +0.14 average precision over the rules, and
+**Gradient boosting still wins** — +0.15 average precision over the rules, and
 +11 points of precision at the same recall. That is the honest result, and it is
 reported rather than buried.
 
@@ -194,7 +208,7 @@ percentiles, connected-component size and compactness) moved **logistic
 regression from 0.802 to 0.846 AP** while leaving gradient boosting effectively
 unchanged (0.861 → 0.859). The information was always there; boosting had been
 recovering it through interactions, and the new features simply make it linearly
-accessible. The rule gate's own ranking did not benefit (0.719 → 0.715, well
+accessible. The rule gate's own ranking did not benefit (0.719 → 0.712, well
 inside noise at n = 621) — three thresholds cannot use what a regression can.
 
 **The learned scorer is now something you can actually run.** It used to be
@@ -211,7 +225,7 @@ changed feature vector raises rather than scoring quietly. The rules remain the
 default, for reasons worth stating plainly: they are inspectable (every decision
 returns the rule that fired), they add no runtime dependency, and there is no
 model artifact to version, retrain, or drift. For a spend-control filter those
-properties are worth real money. The measured price of that choice is the 0.14
+properties are worth real money. The measured price of that choice is the 0.15
 AP above.
 
 ![Precision-recall curves](docs/figures/pr_curves.png)
@@ -545,6 +559,37 @@ Useful flags: `--pixel-metrics` on `eval`, `--sample stratified|sequential` and
 
 Anything that can spend money defaults to not spending it; `--vlm` is opt-in and
 `--max-vlm-calls` is a hard cap.
+
+## A local UI
+
+```bash
+pip install -e ".[ui]"
+satchangegate serve
+```
+
+A locally hosted review surface for the whole funnel: the 24 AOIs on a map, a
+before/after comparison with swipe, blend and difference, the evidence every
+verification was based on, the metrics dashboard, a live threshold playground,
+and a console over every operation the CLI exposes.
+
+Three properties it is built around, because a UI is the easiest possible place
+to undo what the rest of this repo is for:
+
+- **Every panel shows the command that produces it**, and that command is
+  generated by the server from the same validated request a run would use, not
+  assembled in the page. The CLI and the API go through one service layer, so a
+  displayed command and the number beside it cannot drift apart.
+- **Missing is a state, not an error.** `data/` is gitignored, so a fresh clone
+  has the committed samples and nothing else. Any panel without its artifact
+  says which command would produce it instead of rendering a blank.
+- **A key being present is not permission to spend.** Paid calls are off unless
+  `--allow-spend` is passed, and the UI shows why an operation is unavailable
+  rather than offering a button that fails.
+
+It binds loopback and **refuses** any other host: the process holds whatever is
+in `.env`, and one per-launch token is not an access policy for a network. It
+makes no external request at all unless you switch the map's basemap on — fonts
+are system fonts and Leaflet is vendored.
 
 ## Development
 

@@ -599,6 +599,70 @@ def dev_tests_cmd(
         raise typer.Exit(1)
 
 
+@app.command("serve")
+def serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Loopback only."),
+    port: int = typer.Option(8000, "--port"),
+    root: Path = typer.Option(default_oscd_root(), "--root"),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open a browser."),
+    allow_spend: bool = typer.Option(
+        False, "--allow-spend/--no-allow-spend", help="Permit paid API calls from the UI."
+    ),
+    spend_cap_usd: float = typer.Option(1.00, "--spend-cap-usd", help="Hard session cap."),
+) -> None:
+    """Serve the local review UI.
+
+    Refuses a non-loopback host rather than warning about one. This process holds
+    whatever is in `.env`, and "it is only on my LAN" is not an access policy;
+    sharing it is a separate feature that needs real authentication.
+    """
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            f"[red]Refusing to bind {host!r}.[/red] This process holds a live API key "
+            "and has no authentication beyond a per-launch token."
+        )
+        console.print(
+            "[dim]Loopback only: --host 127.0.0.1. Sharing needs real auth and a "
+            "transport that is not plain HTTP.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    try:
+        import uvicorn
+
+        from satchangegate.webui.app import AppConfig, create_app
+    except ImportError as exc:
+        console.print(f"[red]The web UI needs its optional extra: {exc}[/red]")
+        console.print('[dim]pip install -e ".[ui]"[/dim]')
+        raise typer.Exit(1) from exc
+
+    config = AppConfig(
+        oscd_root=root,
+        reports=out,
+        allow_spend=allow_spend,
+        spend_cap_usd=spend_cap_usd,
+    )
+    url = f"http://{host}:{port}/"
+    console.print(f"[green]SatChangeGate UI[/green] {url}")
+    if allow_spend:
+        console.print(
+            f"[yellow]Paid calls are ENABLED, capped at ${spend_cap_usd:.2f} for this "
+            "session.[/yellow]"
+        )
+    else:
+        console.print("[dim]Paid calls are disabled. --allow-spend turns them on.[/dim]")
+    console.print("[dim]Ctrl-C to stop.[/dim]")
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(create_app(config), host=host, port=port, log_level="warning")
+
+
 @app.command("verify")
 def verify_cmd(root: Path = typer.Option(default_oscd_root(), "--root")) -> None:
     """Check that the dataset and configuration are usable."""
