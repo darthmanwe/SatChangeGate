@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import Field
 
+from satchangegate.config import S2_REFLECTANCE_SCALE
 from satchangegate.data.oscd import default_oscd_root
 from satchangegate.services.base import ServiceRequest
 
@@ -115,6 +116,61 @@ class RunPairRequest(ServiceRequest):
     llm: bool = False
     model: str | None = None
     negative_mode: Literal["identity", "stable", "photometric"] | None = None
+
+
+class RunImagesRequest(ServiceRequest):
+    """Run the funnel over two image files under a declared contract.
+
+    Exists on the CLI as well as the API for a reason the plan is strict about:
+    a web-only knob makes the displayed command a lie. An uploaded pair that
+    cannot be reproduced from a command line is a result nobody can check.
+    """
+
+    command_name: ClassVar[str] = "run-images"
+    cli_flags: ClassVar[dict[str, str]] = {
+        "t1": "--t1",
+        "t2": "--t2",
+        "bands": "--bands",
+        "reflectance_scale": "--reflectance-scale",
+        "reflectance_offset": "--reflectance-offset",
+        "date_t1": "--date-t1",
+        "date_t2": "--date-t2",
+        "alignment": "--alignment",
+        "resolution_m": "--resolution-m",
+        "name": "--name",
+        "out": "--out",
+        "vlm": "--vlm",
+    }
+    paired_bools: ClassVar[frozenset[str]] = frozenset({"vlm"})
+
+    t1: Path
+    t2: Path
+    #: "B04=1,B03=2,B02=3" -- the band each raster index carries. Named rather
+    #: than positional, because band 4 of an arbitrary GeoTIFF is not red.
+    bands: str
+    reflectance_scale: float = Field(S2_REFLECTANCE_SCALE, gt=0)
+    reflectance_offset: float = 0.0
+    date_t1: str | None = None
+    date_t2: str | None = None
+    alignment: Literal["georeferenced", "already_aligned"] = "georeferenced"
+    resolution_m: float | None = Field(None, gt=0)
+    name: str = "upload"
+    out: Path = REPORTS
+    vlm: bool = False
+
+    def band_map(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for chunk in str(self.bands).split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if "=" not in chunk:
+                raise ValueError(f"Bad band mapping {chunk!r}; expected NAME=index.")
+            name, _, index = chunk.partition("=")
+            out[name.strip()] = int(index)
+        if not out:
+            raise ValueError("No bands declared.")
+        return out
 
 
 class EvalRequest(ServiceRequest):
@@ -332,6 +388,113 @@ def run_pair_service(request: RunPairRequest, __report: ProgressFn | None = None
             "error": result.error,
         },
         result.result_path,
+    )
+
+
+def run_images_service(
+    request: RunImagesRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
+    """Verify a declared image pair, then run whichever lane it supports.
+
+    Two lanes, and the difference is not a quality setting. A source carrying
+    near-infrared and short-wave infrared gets the gate. One that does not gets
+    structural evidence and an explicit refusal, because every gate threshold in
+    this repo is defined over indices that RGB cannot express.
+    """
+    from satchangegate.config import get_settings
+    from satchangegate.features.classical import rgb_only_gate
+    from satchangegate.pipeline import run_from_bands
+    from satchangegate.preprocess.align import estimate_registration_error
+    from satchangegate.preprocess.masks import combine_pair_masks, compute_ephemeral_masks
+    from satchangegate.preprocess.quality import compute_quality_score
+    from satchangegate.webui.ingest import Declaration, IngestRefused, read_pair
+
+    declaration = Declaration(
+        band_map=request.band_map(),
+        reflectance_scale=request.reflectance_scale,
+        reflectance_offset=request.reflectance_offset,
+        date_t1=request.date_t1,
+        date_t2=request.date_t2,
+        alignment=request.alignment,
+        target_resolution_m=request.resolution_m,
+        source_name=request.name,
+    )
+    try:
+        pair = read_pair(request.t1, request.t2, declaration)
+    except IngestRefused as exc:
+        raise ServiceUnavailable(str(exc)) from None
+
+    settings = get_settings()
+    date_t1 = request.date_t1 or "t1"
+    date_t2 = request.date_t2 or "t2"
+
+    if pair.capability.lane == "full":
+        result = run_from_bands(
+            request.name,
+            pair.bands_t1,
+            pair.bands_t2,
+            settings=settings,
+            out_dir=request.out,
+            date_t1=date_t1,
+            date_t2=date_t2,
+            source="upload",
+            skip_vlm=not request.vlm,
+        )
+        data = {
+            "lane": "full",
+            "ingest": pair.to_dict(),
+            "gate": result.classical.classical_gate,
+            "classical": result.classical.model_dump(),
+            "quality": result.quality.model_dump(),
+            "vlm_called": result.vlm_called,
+            "vlm_verdict": result.vlm_verdict.model_dump() if result.vlm_verdict else None,
+            "cost_usd": result.cost_usd,
+            "error": result.error,
+        }
+        return _result(request, data, result.result_path)
+
+    # Degraded lane. The masks tier needs bands this source lacks too, so it
+    # reports itself unassessed rather than clean.
+    masks_t1 = compute_ephemeral_masks(pair.bands_t1, settings.masks)
+    masks_t2 = compute_ephemeral_masks(pair.bands_t2, settings.masks)
+    combined = combine_pair_masks(masks_t1, masks_t2)
+    combined.valid[~pair.valid] = False
+    registration = estimate_registration_error(pair.bands_t1, pair.bands_t2)
+    quality = compute_quality_score(
+        masks_t1,
+        masks_t2,
+        settings.quality,
+        registration_error_px=registration,
+        date_t1=date_t1,
+        date_t2=date_t2,
+        combined=combined,
+    )
+    artifacts = rgb_only_gate(
+        request.name,
+        pair.bands_t1,
+        pair.bands_t2,
+        combined,
+        quality,
+        settings.gate,
+        date_t1=date_t1,
+        date_t2=date_t2,
+        source="upload",
+    )
+    return _result(
+        request,
+        {
+            "lane": "rgb_only",
+            "ingest": pair.to_dict(),
+            "gate": artifacts.result.classical_gate,
+            "structural": artifacts.result.model_dump(),
+            "quality": quality.model_dump(),
+            "vlm_called": False,
+            "note": (
+                "No gate decision was produced and none could be. The evidence "
+                "above is structural only; a verification request from here is "
+                "recorded as a manual review, outside the funnel's metrics."
+            ),
+        },
     )
 
 
@@ -593,6 +756,16 @@ SERVICES: dict[str, ServiceSpec] = {
             needs_network=True,
             requires=("dataset",),
             spend_fields=("vlm", "llm"),
+        ),
+        ServiceSpec(
+            "run-images",
+            RunImagesRequest,
+            run_images_service,
+            "Run the funnel over two declared image files.",
+            "seconds",
+            spends_money=True,
+            needs_network=True,
+            spend_fields=("vlm",),
         ),
         ServiceSpec(
             "eval",

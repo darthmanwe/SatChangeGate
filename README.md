@@ -552,6 +552,8 @@ satchangegate baselines              # rule gate vs learned models
 satchangegate embedding-coverage     # what AlphaEarth can speak to here
 satchangegate dev-tests              # offline control battery
 satchangegate verify                 # check dataset + config
+satchangegate run-images --t1 a --t2 b  # your own pair, under a declared contract
+satchangegate serve                  # the local review UI
 ```
 
 Useful flags: `--pixel-metrics` on `eval`, `--sample stratified|sequential` and
@@ -585,6 +587,30 @@ to undo what the rest of this repo is for:
 - **A key being present is not permission to spend.** Paid calls are off unless
   `--allow-spend` is passed, and the UI shows why an operation is unavailable
   rather than offering a button that fails.
+
+### Bringing your own imagery
+
+```bash
+satchangegate run-images --t1 before.tif --t2 after.tif     --bands "B02=1,B03=2,B04=3,B08=4,B11=5,B12=6"     --reflectance-scale 10000 --resolution-m 10
+```
+
+The UI accepts uploads through the same command. It asks for more than a file
+picker does, and the asking is the point: band 4 of an arbitrary raster is not
+red, dividing by 10000 is right for Sentinel-2 L1C and wrong for almost anything
+else, and two same-sized rasters of different continents pass every shape check
+that `run_from_bands` performs. None of that is recoverable from the bytes, so
+it is declared and then verified. Footprints must genuinely overlap and the pair
+is cropped to the intersection; nodata becomes invalid rather than zero; values
+above 1.0 are kept, because bright targets legitimately exceed it.
+
+**Three-band imagery gets a second lane, and the gate refuses on it.** NDVI needs
+near-infrared and NDBI short-wave infrared, so an RGB render carries no evidence
+the gate is defined over. Rather than scoring a subset and calling it a decision,
+that path returns structural evidence only — SSIM, a perceptual hash distance, a
+change-vector magnitude — under a different result type, so nothing downstream
+can average the two. The vision tier still works there: it only ever sees
+pictures, and a request from that lane is recorded as a manual review, outside
+the funnel's metrics.
 
 It binds loopback and **refuses** any other host: the process holds whatever is
 in `.env`, and one per-launch token is not an access policy for a network. It

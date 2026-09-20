@@ -127,6 +127,7 @@ const VIEWS = [
   ["overview", "./views/overview.js"],
   ["map", "./views/map.js"],
   ["compare", "./views/compare.js"],
+  ["upload", "./views/upload.js"],
   ["funnel", "./views/funnel.js"],
   ["evidence", "./views/evidence.js"],
   ["metrics", "./views/metrics.js"],

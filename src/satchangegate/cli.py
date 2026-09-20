@@ -599,6 +599,103 @@ def dev_tests_cmd(
         raise typer.Exit(1)
 
 
+@app.command("run-images")
+def run_images_cmd(
+    t1: Path = typer.Option(..., "--t1", help="Before image."),
+    t2: Path = typer.Option(..., "--t2", help="After image."),
+    bands: str = typer.Option(..., "--bands", help='Band mapping, e.g. "B04=1,B03=2,B02=3".'),
+    reflectance_scale: float = typer.Option(
+        10000.0, "--reflectance-scale", help="Divide raw values by this to get reflectance."
+    ),
+    reflectance_offset: float = typer.Option(0.0, "--reflectance-offset"),
+    date_t1: str | None = typer.Option(None, "--date-t1", help="ISO date of the before image."),
+    date_t2: str | None = typer.Option(None, "--date-t2"),
+    alignment: str = typer.Option(
+        "georeferenced", "--alignment", help="georeferenced | already_aligned"
+    ),
+    resolution_m: float | None = typer.Option(
+        None, "--resolution-m", help="Ground sample distance."
+    ),
+    name: str = typer.Option("upload", "--name", help="Run identifier."),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+    vlm: bool = typer.Option(False, "--vlm/--no-vlm", help="Call the vision model."),
+) -> None:
+    """Run the funnel over two image files under a declared contract.
+
+    Nothing physical is inferred. Bands are named rather than positional, the
+    reflectance scale is stated rather than guessed from dtype, and footprints
+    must genuinely overlap -- two equal-sized rasters of different continents
+    would otherwise produce a confident answer about nothing.
+    """
+    from satchangegate.services import RunImagesRequest, ServiceUnavailable
+    from satchangegate.services.operations import run_images_service
+
+    try:
+        request = RunImagesRequest(
+            t1=t1,
+            t2=t2,
+            bands=bands,
+            reflectance_scale=reflectance_scale,
+            reflectance_offset=reflectance_offset,
+            date_t1=date_t1,
+            date_t2=date_t2,
+            alignment=alignment,  # type: ignore[arg-type]
+            resolution_m=resolution_m,
+            name=name,
+            out=out,
+            vlm=vlm,
+        )
+        result = run_images_service(request)
+    except (ValueError, ServiceUnavailable) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+    data = result.data
+    ingest = data["ingest"]
+    cap = ingest["capability"]
+    console.print(
+        f"[dim]{ingest['width']}x{ingest['height']} px, "
+        f"{ingest['valid_fraction']:.1%} valid, CRS {ingest['crs'] or 'none'}[/dim]"
+    )
+    for note in ingest["warnings"]:
+        console.print(f"[yellow]{note}[/yellow]")
+
+    if data["lane"] == "full":
+        c = data["classical"]
+        table = Table(title=f"{name} — {c['classical_gate']}")
+        table.add_column("field")
+        table.add_column("value")
+        for key, value in (
+            ("gate", f"{c['classical_gate']} ({c['gate_reason']})"),
+            ("confidence", f"{c['gate_confidence']:.3f}"),
+            ("dNDVI / dNDBI", f"{c['ndvi_delta_mean']:+.4f} / {c['ndbi_delta_mean']:+.4f}"),
+            ("changed area", f"{c['changed_area_percent']:.2f}%"),
+            ("registration", f"{c['registration_error_px']} px"),
+            ("VLM called", str(data["vlm_called"])),
+            ("cost", f"${data['cost_usd']:.4f}"),
+        ):
+            table.add_row(key, str(value))
+        console.print(table)
+    else:
+        r = data["structural"]
+        console.print(f"[yellow]No gate decision: {r['gate_reason']}[/yellow]")
+        console.print(f"[dim]Missing for the gate: {', '.join(cap['missing_for_gate'])}.[/dim]")
+        table = Table(title=f"{name} — structural evidence only")
+        table.add_column("field")
+        table.add_column("value")
+        for key, value in (
+            ("SSIM", f"{r['ssim']:.4f}"),
+            ("pHash distance", r["phash_distance"]),
+            ("change-vector mean", f"{r['cva_magnitude_mean']:.4f}"),
+            ("changed area (CVA)", f"{r['changed_area_percent']:.2f}%"),
+            ("components", r["n_components"]),
+            ("unavailable", f"{len(r['unavailable'])} spectral features"),
+        ):
+            table.add_row(key, str(value))
+        console.print(table)
+        console.print(f"[dim]{data['note']}[/dim]")
+
+
 @app.command("serve")
 def serve_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Loopback only."),

@@ -349,6 +349,186 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from None
         return Response(blob, media_type=media)
 
+    # ---------------------------------------------------------------- uploads
+
+    @app.get("/api/uploads/contract")
+    def upload_contract() -> dict[str, Any]:
+        """What an upload has to declare, and why each part is required."""
+        from satchangegate.config import ALL_BANDS, GATE_BANDS
+        from satchangegate.webui.ingest import ALLOWED_DRIVERS, Limits
+
+        limits = Limits()
+        return {
+            "band_names": list(ALL_BANDS),
+            "bands_the_gate_needs": list(GATE_BANDS),
+            "allowed_drivers": sorted(ALLOWED_DRIVERS),
+            "limits": {
+                "max_file_mb": limits.max_file_bytes // (1024 * 1024),
+                "max_total_mb": limits.max_total_bytes // (1024 * 1024),
+                "max_megapixels": limits.max_pixels // 1_000_000,
+                "max_bands": limits.max_bands,
+                "max_files": limits.max_files,
+            },
+            "requirements": [
+                {
+                    "what": "Name every band",
+                    "why": "Band 4 of an arbitrary raster is not NDVI's red channel "
+                    "just because it is fourth.",
+                },
+                {
+                    "what": "Declare the reflectance scale",
+                    "why": "10000 is right for Sentinel-2 L1C and wrong for almost "
+                    "everything else, and dtype does not reveal which you have. "
+                    "Values above 1.0 are kept: bright targets legitimately exceed it.",
+                },
+                {
+                    "what": "Georeferenced, or explicitly already-aligned",
+                    "why": "Equal pixel dimensions do not mean equal ground. Two "
+                    "same-sized rasters of different continents would otherwise "
+                    "produce a confident answer about nothing.",
+                },
+                {
+                    "what": "State the ground resolution",
+                    "why": "Despeckling, component sizes, the 3x context window and "
+                    "the 1.5 px registration tolerance are all in pixels. The same "
+                    "thresholds mean something different at 30 m.",
+                },
+                {
+                    "what": "Pair the files explicitly",
+                    "why": "Which file is before and which is after is not "
+                    "recoverable from filenames, and a mis-paired comparison is not "
+                    "detectable downstream -- it just answers about the wrong thing.",
+                },
+            ],
+        }
+
+    @app.post("/api/uploads", dependencies=[token_guard])
+    async def create_upload(request: Request) -> dict[str, Any]:
+        """Stage files. Nothing is decoded here beyond what the limits need."""
+        from satchangegate.webui.ingest import IngestRefused, Limits
+        from satchangegate.webui.uploads import UploadStore
+
+        store_ = UploadStore(_run_root(config))
+        limits = Limits()
+        form = await request.form()
+        upload_id = store_.new()
+        stored: list[dict[str, str]] = []
+        try:
+            for value in form.getlist("files"):
+                # A multipart field can be a plain string; only real file parts
+                # carry bytes, and a string masquerading as one is not an upload.
+                if isinstance(value, str):
+                    continue
+                client_name = getattr(value, "filename", None)
+                if not client_name:
+                    continue
+                data = await value.read()
+                name = store_.store(upload_id, client_name, data, limits)
+                stored.append({"stored": name, "client_name": client_name})
+        except IngestRefused as exc:
+            store_.discard(upload_id)
+            raise HTTPException(413, str(exc)) from None
+        if not stored:
+            store_.discard(upload_id)
+            raise HTTPException(422, "No files were uploaded.")
+        return {
+            "upload_id": upload_id,
+            "files": stored,
+            "note": (
+                "Stored under names this server chose. The name you sent is kept "
+                "for display only: a client-supplied path never reaches the "
+                "filesystem."
+            ),
+        }
+
+    @app.post("/api/uploads/{upload_id}/inspect", dependencies=[token_guard])
+    def inspect_upload(upload_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Verify every declared pair without running or spending anything."""
+        from satchangegate.webui.ingest import IngestRefused
+        from satchangegate.webui.uploads import Manifest, UploadStore, inspect
+
+        store_ = UploadStore(_run_root(config))
+        try:
+            manifest = Manifest.parse(payload, store_.filenames(upload_id))
+            return inspect(store_, upload_id, manifest)
+        except IngestRefused as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @app.post("/api/uploads/{upload_id}/run", dependencies=[token_guard])
+    def run_upload(upload_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Queue one verified pair. Same service, same command, as the CLI."""
+        from satchangegate.services import SERVICES, RunImagesRequest
+        from satchangegate.webui.ingest import IngestRefused
+        from satchangegate.webui.jobs import QueueFull
+        from satchangegate.webui.uploads import Manifest, UploadStore
+
+        store_ = UploadStore(_run_root(config))
+        try:
+            manifest = Manifest.parse(payload, store_.filenames(upload_id))
+        except IngestRefused as exc:
+            raise HTTPException(422, str(exc)) from None
+
+        key = str(payload.get("pair") or (manifest.pairs[0].key if manifest.pairs else ""))
+        pair = next((p for p in manifest.pairs if p.key == key), None)
+        if pair is None:
+            raise HTTPException(404, f"No pair {key!r} in this manifest.")
+
+        spec = SERVICES["run-images"]
+        decl = manifest.declaration
+        try:
+            request = RunImagesRequest(
+                t1=store_.path(upload_id, pair.t1_name),
+                t2=store_.path(upload_id, pair.t2_name),
+                bands=",".join(f"{k}={v}" for k, v in sorted(decl.band_map.items())),
+                reflectance_scale=decl.reflectance_scale,
+                reflectance_offset=decl.reflectance_offset,
+                date_t1=decl.date_t1,
+                date_t2=decl.date_t2,
+                alignment=decl.alignment,
+                resolution_m=decl.target_resolution_m,
+                name=pair.key,
+                vlm=bool(payload.get("vlm")),
+            )
+        except (ValueError, IngestRefused) as exc:
+            raise HTTPException(422, str(exc)) from None
+
+        if spec.request_spends(request) and not config.allow_spend:
+            raise HTTPException(
+                403,
+                "Verification would make a paid API call and this server was "
+                "started without --allow-spend.",
+            )
+
+        runner = _runner(app, config)
+        params = request.model_dump(mode="json")
+
+        def prepare(run_id: str, queued: dict[str, Any]) -> None:
+            queued["out"] = _isolated_out(runner, run_id, spec)
+
+        try:
+            run_id = runner.submit(
+                "run-images",
+                params,
+                command=request.to_command(),
+                display_name=f"upload {pair.key}",
+                fingerprint=provenance_fingerprint(),
+                prepare=prepare,
+            )
+        except QueueFull as exc:
+            raise HTTPException(429, str(exc)) from None
+        return {"run_id": run_id, "command": request.to_command(), "pair": pair.to_dict()}
+
+    @app.delete("/api/uploads/{upload_id}", dependencies=[token_guard])
+    def discard_upload(upload_id: str) -> dict[str, Any]:
+        from satchangegate.webui.ingest import IngestRefused
+        from satchangegate.webui.uploads import UploadStore
+
+        try:
+            UploadStore(_run_root(config)).discard(upload_id)
+        except IngestRefused as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"discarded": upload_id}
+
     # ------------------------------------------------------------------- runs
 
     @app.get("/api/worker")
@@ -693,6 +873,12 @@ _LEDGER_FIELDS = (
     "cost_usd",
     "error",
 )
+
+
+def _run_root(config: AppConfig) -> Path:
+    from satchangegate.webui.runs import DEFAULT_RUN_ROOT
+
+    return Path(config.run_root or DEFAULT_RUN_ROOT)
 
 
 def _runner(app: FastAPI, config: AppConfig) -> Any:

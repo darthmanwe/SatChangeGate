@@ -260,11 +260,16 @@ class TestCommandRendering:
 
     def test_every_operation_renders_a_command_from_its_defaults(self) -> None:
         """A field with no flag is a field no command can reproduce."""
+        required = {
+            "pair": "beirut",
+            "t1": "before.tif",
+            "t2": "after.tif",
+            "bands": "B04=1,B03=2,B02=3",
+        }
         for name, spec in SERVICES.items():
-            if "pair" in spec.request_type.model_fields:
-                request = spec.request_type(pair="beirut")
-            else:
-                request = spec.request_type()
+            fields = spec.request_type.model_fields
+            kwargs = {k: v for k, v in required.items() if k in fields}
+            request = spec.request_type(**kwargs)
             assert request.to_command().startswith(
                 f"satchangegate {spec.request_type.command_name}"
             )

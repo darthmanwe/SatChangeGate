@@ -78,6 +78,21 @@ change was made, and all four are now covered by a failing-first test.
   on OSCD, whose rasters are fully populated, and a live hole for any uploaded
   scene carrying nodata.
 
+### Added
+
+- **A local web UI** (`satchangegate serve`, behind a `[ui]` extra) and the
+  shared `services/` layer beneath it, which the CLI now goes through too. The
+  UI promises that every panel shows the command producing it; that is only
+  worth anything if the command and the panel run the same code, so commands are
+  rendered from the same validated request object that ran.
+- **`satchangegate run-images`** — the funnel over two image files under a
+  declared contract. Bands are named rather than positional, reflectance scaling
+  is stated rather than guessed from dtype, footprints must genuinely overlap,
+  and nodata becomes invalid rather than zero. Three-band imagery routes to a
+  separate lane where the gate refuses and says which bands it lacks, returning
+  structural evidence under its own result type so nothing can average the two.
+- `--stride` and `--pos-min-fraction` on `tiles`, and `--overwrite` on `e2e`.
+
 ### Changed
 
 - **`urbanization_score_min` raised from a tie to a choice: 0.10 -> 0.05.** The
