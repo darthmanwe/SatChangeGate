@@ -136,10 +136,18 @@ async function refresh(panel, op) {
         el("summary", { class: "dim" }, "normalised request"),
         el("pre", { class: "mono", style: "overflow-x:auto; font-size:12px" },
           JSON.stringify(res.normalised, null, 2))),
-      el("p", { class: "dim" },
-        "Execution from the browser arrives with the job runner and the " +
-        "reservation ledger. Until then this validates the request and hands " +
-        "you the command."),
+      el("div", { style: "display:flex; gap:8px; align-items:center; margin-top:10px" },
+        el("button", {
+          class: "primary",
+          onClick: () => execute(panel, op),
+        }, "Run"),
+        el("span", { class: "dim", style: "font-size:12px" },
+          op.spends_money
+            ? "This operation can spend. The server refuses any request that "
+              + "actually would, unless it was started with --allow-spend."
+            : "Runs on the single worker and writes into its own run directory."),
+      ),
+      el("div", { id: "run-slot" }),
     );
     setStatus(undefined, `${op.name}: request valid`);
   } catch (err) {
@@ -147,4 +155,56 @@ async function refresh(panel, op) {
       el("strong", {}, "Invalid request. "), String(err.message || err)));
     setStatus(undefined, `${op.name}: request invalid`);
   }
+}
+
+
+/* ---------------------------------------------------------------- execute -- */
+
+async function execute(panel, op) {
+  const slot = panel.querySelector("#run-slot");
+  slot.replaceChildren(spinner("queueing…"));
+  let res;
+  try {
+    res = await api.post("/api/runs", { operation: op.name, params: state.params });
+  } catch (err) {
+    slot.replaceChildren(el("div", { class: "notice stop" },
+      el("strong", {}, "Refused. "), String(err.message || err)));
+    return;
+  }
+  const log = el("div", {
+    class: "mono",
+    style: "max-height:220px; overflow:auto; font-size:11px; margin-top:8px",
+  });
+  slot.replaceChildren(el("p", { class: "dim mono" }, `run ${res.run_id}`), log);
+
+  const source = new EventSource(`/api/runs/${res.run_id}/stream`);
+  source.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    log.prepend(el("div", {}, `${d.kind} ${summarise(d)}`));
+  };
+  source.addEventListener("done", async () => {
+    source.close();
+    try {
+      const run = await api.get(`/api/runs/${res.run_id}`);
+      slot.append(el("div", { class: run.status === "succeeded" ? "notice" : "notice stop" },
+        el("strong", {}, run.status === "succeeded" ? "Done. " : "Failed. "),
+        run.status === "succeeded"
+          ? `in ${run.duration_s}s, wrote to ${run.request.out || "(no output path)"}`
+          : run.error));
+      if (run.result?.data) {
+        slot.append(el("details", {},
+          el("summary", { class: "dim" }, "result"),
+          el("pre", { class: "mono", style: "overflow-x:auto; font-size:11px" },
+            JSON.stringify(run.result.data, null, 2).slice(0, 4000))));
+      }
+    } catch { /* the log already shows what happened */ }
+  });
+}
+
+function summarise(event) {
+  const skip = new Set(["kind", "seq", "at"]);
+  return Object.entries(event)
+    .filter(([k]) => !skip.has(k))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
 }

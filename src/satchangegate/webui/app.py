@@ -48,6 +48,7 @@ class AppConfig:
     reports: Path | None = None
     sample: Path | None = None
     models: Path | None = None
+    run_root: Path | None = None
     allow_spend: bool = False
     spend_cap_usd: float = 1.0
     token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
@@ -146,7 +147,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         for name, spec in SERVICES.items():
             missing = [r for r in spec.requires if not present.get(r, True)]
             blocked = list(missing)
-            if spec.spends_money and not config.allow_spend:
+            # An operation that *can* spend is not blocked outright: only the
+            # requests that actually would are. The UI shows the flag so a form
+            # can warn before submitting.
+            if spec.spends_money and not config.allow_spend and not spec.spend_fields:
                 blocked.append("spend-disabled")
             operations.append(
                 {
@@ -154,6 +158,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     "summary": spec.summary,
                     "speed": spec.speed,
                     "spends_money": spec.spends_money,
+                    "spend_fields": list(spec.spend_fields),
                     "needs_network": spec.needs_network,
                     "requires": list(spec.requires),
                     "available": not blocked,
@@ -343,6 +348,149 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         except ArtifactMissing as exc:
             raise HTTPException(404, str(exc)) from None
         return Response(blob, media_type=media)
+
+    # ------------------------------------------------------------------- runs
+
+    @app.get("/api/worker")
+    def worker_status() -> dict[str, Any]:
+        runner = _runner(app, config)
+        return {
+            **runner.status(),
+            "note": (
+                "One worker by design. Two would contend for the same scene cache "
+                "and double the peak memory for no gain."
+            ),
+        }
+
+    @app.get("/api/runs")
+    def list_runs(limit: int = 50) -> dict[str, Any]:
+        runner = _runner(app, config)
+        return {
+            "runs": [r.to_dict() for r in runner.store.recent(limit=min(limit, 200))],
+            "root": str(runner.store.root),
+            "isolation_note": (
+                "Runs made here write only into their own directory. The benchmark "
+                "under data/reports is mounted read-only: it holds verifications "
+                "that cost money and most entry points would overwrite it."
+            ),
+        }
+
+    @app.post("/api/runs", dependencies=[token_guard])
+    def submit_run(payload: dict[str, Any]) -> dict[str, Any]:
+        """Queue an operation. Refuses anything that would spend without permission."""
+        from satchangegate.services import SERVICES
+        from satchangegate.webui.jobs import QueueFull
+
+        name = str(payload.get("operation", ""))
+        spec = SERVICES.get(name)
+        if spec is None:
+            raise HTTPException(404, f"Unknown operation {name!r}")
+        try:
+            request = spec.request_type(**(payload.get("params") or {}))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+        # Judge the request, not the operation. `e2e --no-vlm` costs nothing but
+        # CPU and is the most useful thing to run; blocking it alongside the paid
+        # path would make the spend guard an obstacle rather than a control.
+        if spec.request_spends(request) and not config.allow_spend:
+            raise HTTPException(
+                403,
+                "This request would make paid API calls and this server was started "
+                "without --allow-spend. Restart with it and a cap you are happy to "
+                "lose, or submit the same operation with the paid flags off.",
+            )
+
+        runner = _runner(app, config)
+        params = request.model_dump(mode="json")
+
+        def prepare(run_id: str, queued: dict[str, Any]) -> None:
+            # Point the run's output at a directory named after it. This has to
+            # happen before the work is enqueued: rewriting the payload
+            # afterwards races a worker that may already have picked it up.
+            if spec.isolate_out and "out" in spec.request_type.model_fields:
+                queued["out"] = _isolated_out(runner, run_id, spec)
+
+        try:
+            run_id = runner.submit(
+                name,
+                params,
+                command=request.to_command(),
+                display_name=str(payload.get("name") or name),
+                fingerprint=provenance_fingerprint(),
+                prepare=prepare,
+            )
+        except QueueFull as exc:
+            raise HTTPException(429, str(exc)) from None
+        return {"run_id": run_id, "command": request.to_command()}
+
+    @app.get("/api/runs/{run_id}")
+    def get_run(run_id: str) -> dict[str, Any]:
+        runner = _runner(app, config)
+        run = runner.store.get(run_id)
+        if run is None:
+            raise HTTPException(404, f"No run {run_id!r}")
+        return {**run.to_dict(), "complete_bundle": runner.store.is_complete(run_id)}
+
+    @app.get("/api/runs/{run_id}/events")
+    def run_events(run_id: str, after: int = 0) -> dict[str, Any]:
+        runner = _runner(app, config)
+        if runner.store.get(run_id) is None:
+            raise HTTPException(404, f"No run {run_id!r}")
+        events = runner.store.events(run_id, after=after)
+        return {"run_id": run_id, "after": after, "events": events}
+
+    @app.get("/api/runs/{run_id}/stream")
+    def stream_run(run_id: str, after: int = 0) -> Response:
+        """Server-sent events over the durable log.
+
+        SSE is transport here and nothing more: every event was written to the
+        store before it was streamed, so a reconnect with ``after`` resumes
+        exactly, and a client that never connects loses nothing.
+        """
+        from fastapi.responses import StreamingResponse
+
+        runner = _runner(app, config)
+        if runner.store.get(run_id) is None:
+            raise HTTPException(404, f"No run {run_id!r}")
+
+        def events() -> Any:
+            import json as _json
+            import time as _time
+
+            cursor = after
+            deadline = _time.time() + 3600
+            while _time.time() < deadline:
+                for event in runner.store.events(run_id, after=cursor):
+                    cursor = event["seq"]
+                    yield f"id: {cursor}\nevent: {event['kind']}\n"
+                    yield f"data: {_json.dumps(event)}\n\n"
+                run = runner.store.get(run_id)
+                if run and run.status in ("succeeded", "failed", "cancelled"):
+                    yield f"event: done\ndata: {_json.dumps({'status': run.status})}\n\n"
+                    return
+                _time.sleep(0.4)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/runs/{run_id}/cancel", dependencies=[token_guard])
+    def cancel_run(run_id: str) -> dict[str, Any]:
+        runner = _runner(app, config)
+        if runner.store.get(run_id) is None:
+            raise HTTPException(404, f"No run {run_id!r}")
+        asked = runner.cancel(run_id)
+        return {
+            "run_id": run_id,
+            "cancelling": asked,
+            "note": (
+                "Cooperative. Work already dispatched to a provider is not made "
+                "cheaper by stopping the thread that was waiting for it."
+            ),
+        }
 
     # ------------------------------------------------------------- playground
 
@@ -545,6 +693,39 @@ _LEDGER_FIELDS = (
     "cost_usd",
     "error",
 )
+
+
+def _runner(app: FastAPI, config: AppConfig) -> Any:
+    """The process-wide job runner, created on first use.
+
+    Lazily, because constructing it takes the run-store write lock, and a server
+    that never runs anything should not hold a lock that stops another one from
+    starting.
+    """
+    existing = getattr(app.state, "runner", None)
+    if existing is not None:
+        return existing
+    from satchangegate.webui.jobs import JobRunner
+    from satchangegate.webui.runs import DEFAULT_RUN_ROOT, RunStore
+
+    store = RunStore(config.run_root or DEFAULT_RUN_ROOT)
+    runner = JobRunner(store)
+    app.state.runner = runner
+    return runner
+
+
+def _isolated_out(runner: Any, run_id: str, spec: Any) -> str:
+    """Where a run writes: its own directory, never the benchmark's.
+
+    An operation whose default ``out`` is a file keeps that filename inside the
+    run directory; one that writes a directory of reports gets the directory
+    itself. ``download-oscd`` is excluded upstream, because its ``out`` is where
+    the dataset lives rather than where a result goes.
+    """
+    directory = runner.store.run_dir(run_id)
+    default = spec.request_type.model_fields["out"].default
+    name = Path(str(default)).name if default is not None else ""
+    return str(directory / name) if Path(str(default)).suffix else str(directory)
 
 
 def provenance_fingerprint() -> str:

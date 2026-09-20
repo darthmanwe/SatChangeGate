@@ -26,6 +26,11 @@ from satchangegate.data.oscd import default_oscd_root
 from satchangegate.services.base import ServiceRequest
 
 Split = Literal["train", "test", "all"]
+
+#: A durable progress sink: ``report(kind, **payload)``. Optional everywhere,
+#: so a caller never needs to know which operations can report and which
+#: cannot -- an operation that has nothing to say simply does not call it.
+ProgressFn = Callable[..., None]
 REPORTS = Path("data/reports")
 
 
@@ -242,7 +247,7 @@ def _result(request: ServiceRequest, data: dict[str, Any], *artifacts: Path) -> 
     )
 
 
-def run_verify(request: VerifyRequest) -> ServiceResult:
+def run_verify(request: VerifyRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.config import get_settings
     from satchangegate.data.oscd import verify_layout
 
@@ -260,7 +265,7 @@ def run_verify(request: VerifyRequest) -> ServiceResult:
     )
 
 
-def run_download(request: DownloadRequest) -> ServiceResult:
+def run_download(request: DownloadRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.data.download import download_oscd
     from satchangegate.data.oscd import verify_layout
 
@@ -269,7 +274,7 @@ def run_download(request: DownloadRequest) -> ServiceResult:
     return _result(request, {"ok": ok, "message": message, "root": str(root)}, root)
 
 
-def run_tiles(request: TilesRequest) -> ServiceResult:
+def run_tiles(request: TilesRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.data.tiles import build_tile_index, save_tile_index, summarise
 
     tiles = build_tile_index(
@@ -295,7 +300,7 @@ def run_tiles(request: TilesRequest) -> ServiceResult:
     )
 
 
-def run_pair_service(request: RunPairRequest) -> ServiceResult:
+def run_pair_service(request: RunPairRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.data.oscd import discover_pairs
     from satchangegate.pipeline import run_pair
 
@@ -330,7 +335,7 @@ def run_pair_service(request: RunPairRequest) -> ServiceResult:
     )
 
 
-def run_eval_service(request: EvalRequest) -> ServiceResult:
+def run_eval_service(request: EvalRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.evaluate import run_eval
 
     data = run_eval(
@@ -347,7 +352,7 @@ def run_eval_service(request: EvalRequest) -> ServiceResult:
     )
 
 
-def run_tune_service(request: TuneRequest) -> ServiceResult:
+def run_tune_service(request: TuneRequest, __report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.tune_gate import sweep
 
     best = sweep(request.root, split=request.split, out_dir=request.out)
@@ -364,7 +369,7 @@ def run_tune_service(request: TuneRequest) -> ServiceResult:
     )
 
 
-def run_e2e_service(request: E2ERequest) -> ServiceResult:
+def run_e2e_service(request: E2ERequest, report: ProgressFn | None = None) -> ServiceResult:
     from satchangegate.e2e import E2EConfig, run_e2e
 
     data = run_e2e(
@@ -381,6 +386,7 @@ def run_e2e_service(request: E2ERequest) -> ServiceResult:
             overwrite=request.overwrite,
         ),
         resume=request.resume,
+        report=report,
     )
     return _result(
         request,
@@ -390,21 +396,27 @@ def run_e2e_service(request: E2ERequest) -> ServiceResult:
     )
 
 
-def run_vlm_report_service(request: VlmReportRequest) -> ServiceResult:
+def run_vlm_report_service(
+    request: VlmReportRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     from satchangegate.vlm_report import run_vlm_report
 
     data = run_vlm_report(split=request.split, out_dir=request.out)
     return _result(request, data, request.out / "_e2e_vlm_calls.json")
 
 
-def run_baselines_service(request: BaselinesRequest) -> ServiceResult:
+def run_baselines_service(
+    request: BaselinesRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     from satchangegate.baseline import run_baselines
 
     data = run_baselines(request.root, request.out)
     return _result(request, data, request.out / "_baselines.json", request.out / "pr_curves.png")
 
 
-def run_fit_scorer_service(request: FitScorerRequest) -> ServiceResult:
+def run_fit_scorer_service(
+    request: FitScorerRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     """Fit and persist the learned scorer.
 
     The tiling, splitting, feature computation, leakage assertion and persistence
@@ -448,14 +460,18 @@ def run_fit_scorer_service(request: FitScorerRequest) -> ServiceResult:
     )
 
 
-def run_conformal_service(request: ConformalRequest) -> ServiceResult:
+def run_conformal_service(
+    request: ConformalRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     from satchangegate.conformal import run_conformal
 
     data = run_conformal(request.root, request.out, alpha=request.alpha, delta=request.delta)
     return _result(request, data, request.out / "_conformal.json")
 
 
-def run_operating_points_service(request: OperatingPointsRequest) -> ServiceResult:
+def run_operating_points_service(
+    request: OperatingPointsRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     from satchangegate.operating_points import run_operating_points
 
     data = run_operating_points(
@@ -468,7 +484,9 @@ def run_operating_points_service(request: OperatingPointsRequest) -> ServiceResu
     return _result(request, data, request.out / "_operating_points.json")
 
 
-def run_embedding_coverage_service(request: EmbeddingCoverageRequest) -> ServiceResult:
+def run_embedding_coverage_service(
+    request: EmbeddingCoverageRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     import json
 
     from satchangegate.data.embeddings import coverage_report
@@ -481,7 +499,9 @@ def run_embedding_coverage_service(request: EmbeddingCoverageRequest) -> Service
     return _result(request, data, path)
 
 
-def run_dev_tests_service(request: DevTestsRequest) -> ServiceResult:
+def run_dev_tests_service(
+    request: DevTestsRequest, _report: ProgressFn | None = None
+) -> ServiceResult:
     from satchangegate.dev_controls import run_dev_tests
 
     data = run_dev_tests(request.root, request.out, city=request.city)
@@ -509,12 +529,31 @@ class ServiceSpec:
 
     name: str
     request_type: type[ServiceRequest]
-    runner: Callable[[Any], ServiceResult]
+    runner: Callable[..., ServiceResult]
     summary: str
     speed: Literal["instant", "seconds", "minutes", "long"]
     spends_money: bool = False
     needs_network: bool = False
     requires: tuple[str, ...] = field(default_factory=tuple)
+    #: Whether a UI run may redirect this operation's ``out`` into its own
+    #: directory. True for anything that writes a report; false for
+    #: ``download-oscd``, whose ``out`` is where the *dataset* lives rather than
+    #: where a result goes -- isolating that would re-download 513 MB per run.
+    isolate_out: bool = True
+    #: Request fields that, when set, are what actually causes spend.
+    #: ``spends_money`` says an operation *can* spend; this says whether a
+    #: particular request *will*. Without the distinction, `e2e --no-vlm` -- which
+    #: costs nothing but CPU and is the most useful thing to run -- gets blocked
+    #: alongside the paid path.
+    spend_fields: tuple[str, ...] = field(default_factory=tuple)
+
+    def request_spends(self, request: ServiceRequest) -> bool:
+        """Whether this specific request would spend money."""
+        if not self.spends_money:
+            return False
+        if not self.spend_fields:
+            return True
+        return any(bool(getattr(request, name, False)) for name in self.spend_fields)
 
 
 SERVICES: dict[str, ServiceSpec] = {
@@ -534,6 +573,7 @@ SERVICES: dict[str, ServiceSpec] = {
             "Fetch and checksum-verify the 13-band OSCD dataset (~513 MB).",
             "long",
             needs_network=True,
+            isolate_out=False,
         ),
         ServiceSpec(
             "tiles",
@@ -552,6 +592,7 @@ SERVICES: dict[str, ServiceSpec] = {
             spends_money=True,
             needs_network=True,
             requires=("dataset",),
+            spend_fields=("vlm", "llm"),
         ),
         ServiceSpec(
             "eval",
@@ -578,6 +619,7 @@ SERVICES: dict[str, ServiceSpec] = {
             spends_money=True,
             needs_network=True,
             requires=("dataset",),
+            spend_fields=("vlm",),
         ),
         ServiceSpec(
             "vlm-report",
@@ -639,10 +681,14 @@ SERVICES: dict[str, ServiceSpec] = {
 }
 
 
-def run_service(name: str, payload: dict[str, Any] | None = None) -> ServiceResult:
+def run_service(
+    name: str,
+    payload: dict[str, Any] | None = None,
+    report: ProgressFn | None = None,
+) -> ServiceResult:
     """Validate a payload against an operation and run it."""
     spec = SERVICES.get(name)
     if spec is None:
         raise ServiceUnavailable(f"Unknown operation {name!r}")
     request = spec.request_type(**(payload or {}))
-    return spec.runner(request)
+    return spec.runner(request, report)

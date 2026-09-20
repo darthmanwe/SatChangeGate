@@ -34,7 +34,12 @@ def config(tmp_path):
     accident. An app factory that re-read .env at startup would undo exactly
     that, which is why load_env is injectable at all.
     """
-    return AppConfig(reports=tmp_path / "reports", sample=tmp_path / "sample", load_env=False)
+    return AppConfig(
+        reports=tmp_path / "reports",
+        sample=tmp_path / "sample",
+        run_root=tmp_path / "runs",
+        load_env=False,
+    )
 
 
 @pytest.fixture
@@ -173,11 +178,40 @@ class TestCapabilities:
             if not op["available"]:
                 assert op["blocked_by"], "blocked with no reason given"
 
-    def test_spending_operations_are_blocked_while_spend_is_off(self, client) -> None:
+    def test_unconditionally_paid_operations_are_blocked_while_spend_is_off(self, client) -> None:
         caps = client.get("/api/capabilities").json()
         for op in caps["operations"]:
-            if op["spends_money"]:
+            if op["spends_money"] and not op["spend_fields"]:
                 assert "spend-disabled" in op["blocked_by"]
+
+    def test_conditionally_paid_operations_are_judged_per_request(self, client) -> None:
+        """`e2e --no-vlm` costs nothing but CPU and is the most useful thing to run.
+
+        Blocking it alongside the paid path would make the spend guard an
+        obstacle rather than a control, so the decision moves to the request.
+        """
+        caps = client.get("/api/capabilities").json()
+        by_name = {o["name"]: o for o in caps["operations"]}
+        assert by_name["e2e"]["spend_fields"] == ["vlm"]
+        assert "spend-disabled" not in by_name["e2e"]["blocked_by"]
+
+    def test_a_request_that_would_spend_is_refused(self, client, config) -> None:
+        res = client.post(
+            "/api/runs",
+            json={"operation": "e2e", "params": {"split": "test", "vlm": True}},
+            headers={"X-SCG-Token": config.token},
+        )
+        assert res.status_code == 403
+        assert "--allow-spend" in res.json()["detail"]
+
+    def test_the_same_operation_without_the_paid_flag_is_allowed(self, client, config) -> None:
+        res = client.post(
+            "/api/runs",
+            json={"operation": "e2e", "params": {"split": "test", "vlm": False, "n": 1}},
+            headers={"X-SCG-Token": config.token},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["run_id"]
 
     def test_a_key_being_present_is_not_permission_to_spend(self, client) -> None:
         caps = client.get("/api/capabilities").json()

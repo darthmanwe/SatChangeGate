@@ -28,8 +28,10 @@ which candidates to verify, is what makes ``--sample stratified`` possible.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -216,6 +218,23 @@ def _load_done(path: Path) -> dict[str, dict]:
     return out
 
 
+#: A durable progress sink. Called with an event kind and keyword payload; it
+#: must persist before it streams, so a disconnect loses nothing.
+ProgressFn = Callable[..., None]
+
+
+def _emit(report: ProgressFn | None, kind: str, **payload: Any) -> None:
+    """Report progress, and never let reporting break a run.
+
+    A progress sink is a convenience. A run that has already spent money must
+    not fail because something downstream of it could not write a status line.
+    """
+    if report is None:
+        return
+    with contextlib.suppress(Exception):  # reporting is never load-bearing
+        report(kind, **payload)
+
+
 @dataclass
 class _GatePass:
     """Everything the first pass produces."""
@@ -234,12 +253,18 @@ def _gate_pass(
     out_dir: Path,
     *,
     package_candidates: bool,
+    report: ProgressFn | None = None,
 ) -> _GatePass:
     """Gate every pending tile, packaging candidates for later verification.
 
     Packaging happens here because it needs the scene cache, which is the
     expensive part of the run; deferring it would mean preprocessing each city
     twice.
+
+    ``report`` is called as each city finishes. Without it this pass is silent
+    for minutes and then returns everything at once, which is fine for a CLI
+    printing one table at the end and useless for anything showing progress --
+    the ledger is not written until afterwards, so tailing it shows nothing.
     """
     result = _GatePass()
     by_city: dict[str, list[Tile]] = {}
@@ -248,10 +273,16 @@ def _gate_pass(
             continue
         by_city.setdefault(tile.city, []).append(tile)
 
-    for city in sorted(by_city):
+    cities = sorted(by_city)
+    pending = sum(len(v) for v in by_city.values())
+    _emit(report, "gate_pass_started", n_cities=len(cities), n_tiles=pending)
+    seen = 0
+
+    for index, city in enumerate(cities, start=1):
         pair = pairs.get(city)
         if pair is None:
             continue
+        _emit(report, "city_started", city=city, index=index, of=len(cities))
         cache = build_scene_cache(pair, settings)
         for tile in by_city[city]:
             mask, feats = mask_and_features_for_tile(cache, tile, settings)
@@ -280,6 +311,19 @@ def _gate_pass(
                     result.packages[tile.tile_id] = package_dir
                 except Exception as exc:  # packaging must not abort the gate pass
                     result.rows[tile.tile_id]["error"] = f"{type(exc).__name__}: {exc}"
+        seen += len(by_city[city])
+        _emit(
+            report,
+            "city_finished",
+            city=city,
+            done=seen,
+            total=pending,
+            candidates=len(result.candidates),
+        )
+
+    _emit(
+        report, "gate_pass_finished", n_rows=len(result.rows), n_candidates=len(result.candidates)
+    )
     return result
 
 
@@ -291,6 +335,7 @@ def run_e2e(
     settings: Settings | None = None,
     resume: bool = False,
     api_key: str | None = None,
+    report: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """Run the funnel over a labelled sample and report measured cost."""
     config = config or E2EConfig()
@@ -329,7 +374,10 @@ def run_e2e(
     vlm_calls = sum(1 for r in done.values() if r.get("vlm_called"))
 
     want_vlm = not config.skip_vlm
-    gated = _gate_pass(tiles, pairs, settings, done, out_dir, package_candidates=want_vlm)
+    _emit(report, "indexed", n_tiles=len(tiles), split=config.split, resumed=len(done))
+    gated = _gate_pass(
+        tiles, pairs, settings, done, out_dir, package_candidates=want_vlm, report=report
+    )
 
     # Budget remaining after any resumed calls. Computed before submission, not
     # checked per call afterwards: a concurrent or batched submission that checks
@@ -341,6 +389,14 @@ def run_e2e(
         selected = select_candidates(eligible, remaining, strategy=config.sample, seed=config.seed)
 
     selected_set = set(selected)
+    _emit(
+        report,
+        "selected",
+        n_candidates=len(gated.candidates),
+        n_selected=len(selected),
+        strategy=config.sample,
+        cap=config.max_vlm_calls,
+    )
     with open(jsonl_path, "a", encoding="utf-8") as sink:
         # Everything not going to the VLM is final now.
         for tile_id in sorted(gated.rows):
@@ -380,6 +436,16 @@ def run_e2e(
                     row["cost_usd_synchronous"] = round(sync_record.cost_usd, 6)
                 sink.write(json.dumps(row) + "\n")
                 sink.flush()
+                _emit(
+                    report,
+                    "verified",
+                    tile_id=tile_id,
+                    verdict=row.get("vlm_verdict"),
+                    done=vlm_calls,
+                    total=len(selected),
+                    cost_usd=row.get("cost_usd"),
+                    cumulative_cost_usd=round(cost.vlm_cost_usd, 6),
+                )
 
     rows = list(_load_done(jsonl_path).values())
     return _summarise(rows, cost, config, settings, out_dir, gated.candidates_by_city)
