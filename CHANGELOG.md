@@ -12,7 +12,18 @@ Two conventions specific to this project:
 - **Negative results are entries too.** Something measured and rejected is a
   result. It belongs here, not only in the commit that deleted it.
 
-## [Unreleased]
+## [0.4.0] — 2026-09-20
+
+A local review UI, and the corrections that had to land before it could be
+honest. The ordering was the whole design: a demo is the easiest possible place
+to undo what this repo is for, so a 2026-09-19 audit ran first and nothing in
+`webui/` was written until every defect it found was fixed and disclosed.
+
+The audit's headline is that **nothing published was materially wrong**. The
+conformal lambda is unchanged, its bound got *tighter*, and the five published
+budget rows are byte-identical after the tie fix. What changed is that those
+properties are now established rather than assumed -- which is the only claim
+this project has ever made for itself.
 
 ### Corrected
 
@@ -156,7 +167,7 @@ at a comfortable value passes in all three cases. The tests added here sit at
 the boundary instead, which is the lesson the 0.3.0 review already recorded
 about `--max-vlm-calls` and did not generalise far enough.
 
-### Earlier in Unreleased
+### Corrected earlier, after the 0.3.0 tag-equivalent
 
 - **The 0.3.0 rule-count fix was incomplete.** "three documented rules" was
   corrected in `baseline.py` but a second occurrence in
@@ -171,6 +182,27 @@ about `--max-vlm-calls` and did not generalise far enough.
 Both are small, and both are the drift this project exists to catch: a
 correction that names one occurrence of a stale figure and leaves another, and a
 changelog line quoting a number the repo does not print.
+
+### Measured outcomes
+
+| | Before | Now |
+|---|---|---|
+| Conformal lambda | 0.200 | **0.200**, and now independently calibrated |
+| Calibration bound (alpha 0.20) | 0.198 | **0.186** |
+| Held-out FNR / recall | 0.177 / 0.823 | **0.174 / 0.826** |
+| Gate precision / recall / F1 | 0.805 / 0.516 / 0.629 | unchanged |
+| Rule gate AP | 0.715 | 0.712 (confidence moved; decisions did not) |
+| Budgets that overshoot their cap | 3 of 50 swept | **0** |
+| OSCD GeoTIFF label decode | 1.0000 changed | **0.0074**, matching the PNG exactly |
+| Offline tests | 185 | **361** |
+| CLI commands | 14 | **17** |
+
+Two things this release deliberately did *not* do. It did not unify the scorer
+dispatch -- `eval` honours `scorer.kind` while `run` and `e2e` call `decide`
+directly -- so the capability endpoint names which paths apply rather than
+pretending the toggle is global. And it did not wire GOES or Earth Engine, whose
+prerequisites do not exist on the machine this was built on; shipping a button
+for an unverified capability is not a feature.
 
 ## [0.3.0] — 2026-08-30
 

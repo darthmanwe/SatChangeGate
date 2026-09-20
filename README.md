@@ -7,7 +7,7 @@ review runs only on what survives.
 [![CI](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml/badge.svg)](https://github.com/darthmanwe/SatChangeGate/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue.svg)](CHANGELOG.md)
+[![Version 0.4.0](https://img.shields.io/badge/version-0.4.0-blue.svg)](CHANGELOG.md)
 
 ![Gated review funnel](docs/figures/funnel.png)
 
@@ -117,6 +117,13 @@ failed on two:
 | **dubai** | **0.623** | no |
 | **milano** | **0.471** | no |
 
+That failure is the point, not a defect. A conformal guarantee assumes
+calibration and deployment data are exchangeable, and a *geographic* split
+breaks exactly that assumption: dubai and milano do not look like abudhabi,
+mumbai, nantes and pisa. The procedure is sound; the assumption is what fails,
+and it fails in a way this repo can measure and name. Anyone deploying to a new
+AOI should read those two rows as the expected behaviour, not the exception.
+
 **The predictor row is load-bearing, and it was added in September 2026 after
 this section was found to be unsound.** Learn-then-Test needs the score being
 calibrated to come from a model that has not been fitted to the calibration
@@ -142,15 +149,8 @@ does move is `gate_confidence` on 136 of 621 tiles, all upward, by at most 0.058
 The operating-point thresholds and the rule-gate PR curve shift accordingly and
 are regenerated; the headline gate metrics do not move at all.
 
-So the guarantee below applies to the gate this repo actually ships, arrived at
+So the guarantee above applies to the gate this repo actually ships, arrived at
 by a fit that excluded the cities certifying it.
-
-That failure is the point, not a defect. A conformal guarantee assumes
-calibration and deployment data are exchangeable, and a *geographic* split
-breaks exactly that assumption: dubai and milano do not look like abudhabi,
-mumbai, nantes and pisa. The procedure is sound; the assumption is what fails,
-and it fails in a way this repo can measure and name. Anyone deploying to a new
-AOI should read those two rows as the expected behaviour, not the exception.
 
 The price of that recall is spend: λ = 0.200 forwards 75% of tiles rather than
 41%. Which brings the obvious question.
@@ -411,10 +411,30 @@ fall out of the section above: **corrections get their own subsection** — what
 was claimed, what is true, why they differed — and **negative results are entries
 too**, because something measured and rejected is a result.
 
+### 0.4.0 — a local UI, and the corrections it had to wait for
+
+The current release. A demo is the easiest possible place to undo what this repo
+is for, so an audit ran first and no UI code was written until everything it
+found was corrected and disclosed.
+
+| Area | What changed |
+|---|---|
+| **Conformal** | The calibration sample was not independent of the predictor it certified. Fixed by withholding the calibration cities before refitting. Lambda unchanged, bound *tighter* (0.198 → 0.186), held-out recall 0.823 → 0.826. |
+| **Operating points** | Tied scores could push a budget past its own cap — 3 of 50 swept budgets did. Fixed; the five published rows are unchanged. |
+| **Labels** | OSCD's `{1,2}` GeoTIFF encoding decoded to an all-ones mask. Now 0.0074 changed, matching the PNG exactly. |
+| **Tier 0** | Non-finite pixels read as clean. An all-NaN scene is now unassessable, which is what it is. |
+| **UI** | `satchangegate serve` — map, before/after with derived layers, evidence, metrics, threshold playground, upload, and a console over every operation. |
+| **Uploads** | `run-images`, under a declared contract, with a second lane where the gate refuses on RGB and says which bands it lacks. |
+| **Spend** | A reservation ledger: worst-case bound before dispatch, integer micro-dollars, holds that survive a restart. |
+| **`ab-normalize`** | The producing command `_ab_normalize.json` never had. |
+
+Measured outcomes: 185 → 361 offline tests, 14 → 17 commands, and no published
+figure moved except the rule-gate AP (0.715 → 0.712), which followed the
+`urbanization_score_min` adoption and changed zero gate decisions.
+
 ### 0.3.0 — measurement integrity, then gate accuracy
 
-The current release. Six corrected claims, and the improvements that came after
-them:
+Six corrected claims, and the improvements that came after them:
 
 | Area | What changed |
 |---|---|
