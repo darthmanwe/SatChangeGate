@@ -247,9 +247,19 @@ def e2e_cmd(
         False, "--batch/--no-batch", help="Submit via the Batch API (half rate, asynchronous)."
     ),
     resume: bool = typer.Option(False, "--resume/--no-resume", help="Skip completed tiles."),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite/--no-overwrite",
+        help="Discard an existing ledger that holds paid verifications.",
+    ),
 ) -> None:
     """Run the funnel end to end and report measured cost."""
-    from satchangegate.e2e import SAMPLE_STRATEGIES, E2EConfig, run_e2e
+    from satchangegate.e2e import (
+        SAMPLE_STRATEGIES,
+        E2EConfig,
+        LedgerWouldBeDestroyedError,
+        run_e2e,
+    )
 
     if sample not in SAMPLE_STRATEGIES:
         console.print(f"[red]--sample must be one of {SAMPLE_STRATEGIES}[/red]")
@@ -271,20 +281,25 @@ def e2e_cmd(
                 "cap runs out. It is not representative of the split; it exists only "
                 "to reproduce the earlier run.[/yellow]"
             )
-    summary = run_e2e(
-        root,
-        out,
-        config=E2EConfig(
-            split=split,
-            n=n,
-            seed=seed,
-            skip_vlm=not vlm,
-            max_vlm_calls=max_vlm_calls,
-            sample=sample,
-            batch=batch,
-        ),
-        resume=resume,
-    )
+    try:
+        summary = run_e2e(
+            root,
+            out,
+            config=E2EConfig(
+                split=split,
+                n=n,
+                seed=seed,
+                skip_vlm=not vlm,
+                max_vlm_calls=max_vlm_calls,
+                sample=sample,
+                batch=batch,
+                overwrite=overwrite,
+            ),
+            resume=resume,
+        )
+    except LedgerWouldBeDestroyedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
     cost = summary["funnel_cost"]
     table = Table(title=f"Funnel — {split} (n={summary['n']})")
     for col in ("stage", "count", "share"):
@@ -582,6 +597,214 @@ def dev_tests_cmd(
     console.print(f"{summary['n_passed']}/{summary['n_checks']} passed")
     if summary["n_passed"] != summary["n_checks"]:
         raise typer.Exit(1)
+
+
+@app.command("ab-normalize")
+def ab_normalize_cmd(
+    split: str = typer.Option("test", "--split"),
+    root: Path = typer.Option(default_oscd_root(), "--root"),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+) -> None:
+    """Evaluate with PIF radiometric normalization off, then on, and compare.
+
+    Closes a gap this repo should not have had: `_ab_normalize.json` was
+    committed from 0.3.0 with nothing that could regenerate it. A negative
+    result nobody can reproduce is an assertion, not a result.
+
+    Expensive -- two full feature passes and two baseline fits.
+    """
+    from satchangegate.ab_normalize import run_ab_normalize
+
+    console.print("[dim]Two full evaluations. This takes a while.[/dim]")
+    summary = run_ab_normalize(root, out, split=split)
+    off, on, delta = summary["off"], summary["on"], summary["delta_on_minus_off"]
+
+    table = Table(title=f"PIF normalization A/B — {split}")
+    for col in ("metric", "off", "on", "delta"):
+        table.add_column(col)
+    table.add_row(
+        "gate F1",
+        f"{off['gate']['f1']:.4f}",
+        f"{on['gate']['f1']:.4f}",
+        f"{delta['gate_f1']:+.4f}",
+    )
+    table.add_row(
+        "gate precision",
+        f"{off['gate']['precision']:.4f}",
+        f"{on['gate']['precision']:.4f}",
+        f"{delta['gate_precision']:+.4f}",
+    )
+    for name in off["models"]:
+        table.add_row(
+            f"{name} AP",
+            f"{off['models'][name]:.4f}",
+            f"{on['models'][name]:.4f}",
+            f"{delta[f'{name}_ap']:+.4f}",
+        )
+    console.print(table)
+    console.print(f"[dim]{summary['reading']}[/dim]")
+    console.print(f"[dim]Report: {out / '_ab_normalize.md'}[/dim]")
+
+
+@app.command("run-images")
+def run_images_cmd(
+    t1: Path = typer.Option(..., "--t1", help="Before image."),
+    t2: Path = typer.Option(..., "--t2", help="After image."),
+    bands: str = typer.Option(..., "--bands", help='Band mapping, e.g. "B04=1,B03=2,B02=3".'),
+    reflectance_scale: float = typer.Option(
+        10000.0, "--reflectance-scale", help="Divide raw values by this to get reflectance."
+    ),
+    reflectance_offset: float = typer.Option(0.0, "--reflectance-offset"),
+    date_t1: str | None = typer.Option(None, "--date-t1", help="ISO date of the before image."),
+    date_t2: str | None = typer.Option(None, "--date-t2"),
+    alignment: str = typer.Option(
+        "georeferenced", "--alignment", help="georeferenced | already_aligned"
+    ),
+    resolution_m: float | None = typer.Option(
+        None, "--resolution-m", help="Ground sample distance."
+    ),
+    name: str = typer.Option("upload", "--name", help="Run identifier."),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+    vlm: bool = typer.Option(False, "--vlm/--no-vlm", help="Call the vision model."),
+) -> None:
+    """Run the funnel over two image files under a declared contract.
+
+    Nothing physical is inferred. Bands are named rather than positional, the
+    reflectance scale is stated rather than guessed from dtype, and footprints
+    must genuinely overlap -- two equal-sized rasters of different continents
+    would otherwise produce a confident answer about nothing.
+    """
+    from satchangegate.services import RunImagesRequest, ServiceUnavailable
+    from satchangegate.services.operations import run_images_service
+
+    try:
+        request = RunImagesRequest(
+            t1=t1,
+            t2=t2,
+            bands=bands,
+            reflectance_scale=reflectance_scale,
+            reflectance_offset=reflectance_offset,
+            date_t1=date_t1,
+            date_t2=date_t2,
+            alignment=alignment,  # type: ignore[arg-type]
+            resolution_m=resolution_m,
+            name=name,
+            out=out,
+            vlm=vlm,
+        )
+        result = run_images_service(request)
+    except (ValueError, ServiceUnavailable) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+    data = result.data
+    ingest = data["ingest"]
+    cap = ingest["capability"]
+    console.print(
+        f"[dim]{ingest['width']}x{ingest['height']} px, "
+        f"{ingest['valid_fraction']:.1%} valid, CRS {ingest['crs'] or 'none'}[/dim]"
+    )
+    for note in ingest["warnings"]:
+        console.print(f"[yellow]{note}[/yellow]")
+
+    if data["lane"] == "full":
+        c = data["classical"]
+        table = Table(title=f"{name} — {c['classical_gate']}")
+        table.add_column("field")
+        table.add_column("value")
+        for key, value in (
+            ("gate", f"{c['classical_gate']} ({c['gate_reason']})"),
+            ("confidence", f"{c['gate_confidence']:.3f}"),
+            ("dNDVI / dNDBI", f"{c['ndvi_delta_mean']:+.4f} / {c['ndbi_delta_mean']:+.4f}"),
+            ("changed area", f"{c['changed_area_percent']:.2f}%"),
+            ("registration", f"{c['registration_error_px']} px"),
+            ("VLM called", str(data["vlm_called"])),
+            ("cost", f"${data['cost_usd']:.4f}"),
+        ):
+            table.add_row(key, str(value))
+        console.print(table)
+    else:
+        r = data["structural"]
+        console.print(f"[yellow]No gate decision: {r['gate_reason']}[/yellow]")
+        console.print(f"[dim]Missing for the gate: {', '.join(cap['missing_for_gate'])}.[/dim]")
+        table = Table(title=f"{name} — structural evidence only")
+        table.add_column("field")
+        table.add_column("value")
+        for key, value in (
+            ("SSIM", f"{r['ssim']:.4f}"),
+            ("pHash distance", r["phash_distance"]),
+            ("change-vector mean", f"{r['cva_magnitude_mean']:.4f}"),
+            ("changed area (CVA)", f"{r['changed_area_percent']:.2f}%"),
+            ("components", r["n_components"]),
+            ("unavailable", f"{len(r['unavailable'])} spectral features"),
+        ):
+            table.add_row(key, str(value))
+        console.print(table)
+        console.print(f"[dim]{data['note']}[/dim]")
+
+
+@app.command("serve")
+def serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Loopback only."),
+    port: int = typer.Option(8000, "--port"),
+    root: Path = typer.Option(default_oscd_root(), "--root"),
+    out: Path = typer.Option(Path("data/reports"), "--out"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open a browser."),
+    allow_spend: bool = typer.Option(
+        False, "--allow-spend/--no-allow-spend", help="Permit paid API calls from the UI."
+    ),
+    spend_cap_usd: float = typer.Option(1.00, "--spend-cap-usd", help="Hard session cap."),
+) -> None:
+    """Serve the local review UI.
+
+    Refuses a non-loopback host rather than warning about one. This process holds
+    whatever is in `.env`, and "it is only on my LAN" is not an access policy;
+    sharing it is a separate feature that needs real authentication.
+    """
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            f"[red]Refusing to bind {host!r}.[/red] This process holds a live API key "
+            "and has no authentication beyond a per-launch token."
+        )
+        console.print(
+            "[dim]Loopback only: --host 127.0.0.1. Sharing needs real auth and a "
+            "transport that is not plain HTTP.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    try:
+        import uvicorn
+
+        from satchangegate.webui.app import AppConfig, create_app
+    except ImportError as exc:
+        console.print(f"[red]The web UI needs its optional extra: {exc}[/red]")
+        console.print('[dim]pip install -e ".[ui]"[/dim]')
+        raise typer.Exit(1) from exc
+
+    config = AppConfig(
+        oscd_root=root,
+        reports=out,
+        allow_spend=allow_spend,
+        spend_cap_usd=spend_cap_usd,
+    )
+    url = f"http://{host}:{port}/"
+    console.print(f"[green]SatChangeGate UI[/green] {url}")
+    if allow_spend:
+        console.print(
+            f"[yellow]Paid calls are ENABLED, capped at ${spend_cap_usd:.2f} for this "
+            "session.[/yellow]"
+        )
+    else:
+        console.print("[dim]Paid calls are disabled. --allow-spend turns them on.[/dim]")
+    console.print("[dim]Ctrl-C to stop.[/dim]")
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(create_app(config), host=host, port=port, log_level="warning")
 
 
 @app.command("verify")

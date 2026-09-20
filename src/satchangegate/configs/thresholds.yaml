@@ -68,10 +68,24 @@ gate:
   # in-sample balanced accuracy 0.546 for both the incumbent and the argmax. The
   # sweep reported urbanization_score_min 0.05, but only because the search keeps
   # the first combination reaching the maximum and 0.05 comes first in the grid:
-  # 0.05 and 0.10 scored identically. The code default of 0.10 is kept, since
-  # nothing measured prefers either. Held-out effect of the new rules is small and
+  # 0.05 and 0.10 scored identically. Held-out effect of the new rules is small and
   # positive: recall 0.513 -> 0.516, precision 0.804 -> 0.805, F1 0.626 -> 0.629.
-  urbanization_score_min: 0.10
+  #
+  # 2026-09-19: raised from a tie to a choice, and set to 0.05. Nothing measured
+  # prefers either value on accuracy -- that has not changed -- but the conformal
+  # correction gave the tie a tiebreaker. Calibrating a risk-controlled threshold
+  # requires a gate fitted without the calibration cities, and that refit (nine
+  # cities instead of fourteen) landed on 0.05 as well. Keeping 0.10 would have
+  # meant publishing a guarantee that certifies a gate the repo does not ship.
+  #
+  # Adoption is free: on the held-out split this moves ZERO gate decisions. The
+  # confusion matrix is identical (TP 178 / FP 43 / FN 167 / TN 146, precision
+  # 0.8054, recall 0.5159, F1 0.6290), so no headline metric and no funnel
+  # candidate moves, and the 100 paid verifications stay valid. What it does move
+  # is gate_confidence on 136 of 621 tiles, all upward, by at most +0.058 -- which
+  # shifts the operating-point thresholds and the rule-gate PR curve, both
+  # regenerated.
+  urbanization_score_min: 0.05
   magnitude_p95_min: 0.20
   min_largest_component_px: 64
 

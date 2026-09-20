@@ -28,8 +28,10 @@ which candidates to verify, is what makes ``--sample stratified`` possible.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,37 @@ from satchangegate.metrics import ConfusionMatrix, FunnelCost, confusion_from_pa
 SAMPLE_STRATEGIES = ("stratified", "sequential")
 
 
+class LedgerWouldBeDestroyedError(RuntimeError):
+    """Raised rather than deleting verifications that were paid for."""
+
+
+def count_paid_rows(path: Path) -> int:
+    """Verifications in a ledger that were actually bought."""
+    return sum(1 for row in _load_done(path).values() if row.get("vlm_called"))
+
+
+def _refuse_to_discard_paid_work(path: Path, *, overwrite: bool) -> None:
+    """Stop a rerun from silently deleting verifications someone paid for.
+
+    ``run_e2e`` unlinks the ledger whenever it is called without ``resume``, and
+    said nothing about it. The held-out ledger in this repo cost $0.47 and 100
+    live calls to produce; a rerun without the flag destroyed it, along with the
+    per-tile verdicts every downstream report reads.
+
+    A gate-only ledger costs nothing but CPU, so it is still replaced without
+    ceremony. The guard is on spend, not on effort.
+    """
+    paid = count_paid_rows(path)
+    if not paid or overwrite:
+        return
+    raise LedgerWouldBeDestroyedError(
+        f"{path} holds {paid} verification(s) that were paid for, and running "
+        f"without --resume would delete them.\n"
+        f"  --resume     continue that run, keeping what it already bought\n"
+        f"  --overwrite  discard it deliberately and start again"
+    )
+
+
 @dataclass
 class E2EConfig:
     split: str = "test"
@@ -60,6 +93,8 @@ class E2EConfig:
     vlm_model: str | None = None
     sample: str = "stratified"
     batch: bool = False
+    # Deleting a ledger that holds paid verifications has to be asked for.
+    overwrite: bool = False
 
 
 def sample_tiles(tiles: list[Tile], n: int | None, seed: int) -> list[Tile]:
@@ -183,6 +218,23 @@ def _load_done(path: Path) -> dict[str, dict]:
     return out
 
 
+#: A durable progress sink. Called with an event kind and keyword payload; it
+#: must persist before it streams, so a disconnect loses nothing.
+ProgressFn = Callable[..., None]
+
+
+def _emit(report: ProgressFn | None, kind: str, **payload: Any) -> None:
+    """Report progress, and never let reporting break a run.
+
+    A progress sink is a convenience. A run that has already spent money must
+    not fail because something downstream of it could not write a status line.
+    """
+    if report is None:
+        return
+    with contextlib.suppress(Exception):  # reporting is never load-bearing
+        report(kind, **payload)
+
+
 @dataclass
 class _GatePass:
     """Everything the first pass produces."""
@@ -201,12 +253,18 @@ def _gate_pass(
     out_dir: Path,
     *,
     package_candidates: bool,
+    report: ProgressFn | None = None,
 ) -> _GatePass:
     """Gate every pending tile, packaging candidates for later verification.
 
     Packaging happens here because it needs the scene cache, which is the
     expensive part of the run; deferring it would mean preprocessing each city
     twice.
+
+    ``report`` is called as each city finishes. Without it this pass is silent
+    for minutes and then returns everything at once, which is fine for a CLI
+    printing one table at the end and useless for anything showing progress --
+    the ledger is not written until afterwards, so tailing it shows nothing.
     """
     result = _GatePass()
     by_city: dict[str, list[Tile]] = {}
@@ -215,10 +273,16 @@ def _gate_pass(
             continue
         by_city.setdefault(tile.city, []).append(tile)
 
-    for city in sorted(by_city):
+    cities = sorted(by_city)
+    pending = sum(len(v) for v in by_city.values())
+    _emit(report, "gate_pass_started", n_cities=len(cities), n_tiles=pending)
+    seen = 0
+
+    for index, city in enumerate(cities, start=1):
         pair = pairs.get(city)
         if pair is None:
             continue
+        _emit(report, "city_started", city=city, index=index, of=len(cities))
         cache = build_scene_cache(pair, settings)
         for tile in by_city[city]:
             mask, feats = mask_and_features_for_tile(cache, tile, settings)
@@ -247,6 +311,19 @@ def _gate_pass(
                     result.packages[tile.tile_id] = package_dir
                 except Exception as exc:  # packaging must not abort the gate pass
                     result.rows[tile.tile_id]["error"] = f"{type(exc).__name__}: {exc}"
+        seen += len(by_city[city])
+        _emit(
+            report,
+            "city_finished",
+            city=city,
+            done=seen,
+            total=pending,
+            candidates=len(result.candidates),
+        )
+
+    _emit(
+        report, "gate_pass_finished", n_rows=len(result.rows), n_candidates=len(result.candidates)
+    )
     return result
 
 
@@ -258,6 +335,7 @@ def run_e2e(
     settings: Settings | None = None,
     resume: bool = False,
     api_key: str | None = None,
+    report: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """Run the funnel over a labelled sample and report measured cost."""
     config = config or E2EConfig()
@@ -272,6 +350,7 @@ def run_e2e(
 
     done = _load_done(jsonl_path) if resume else {}
     if not resume and jsonl_path.exists():
+        _refuse_to_discard_paid_work(jsonl_path, overwrite=config.overwrite)
         jsonl_path.unlink()
 
     pairs = {p.pair_id: p for p in discover_pairs(oscd_root)}
@@ -295,7 +374,10 @@ def run_e2e(
     vlm_calls = sum(1 for r in done.values() if r.get("vlm_called"))
 
     want_vlm = not config.skip_vlm
-    gated = _gate_pass(tiles, pairs, settings, done, out_dir, package_candidates=want_vlm)
+    _emit(report, "indexed", n_tiles=len(tiles), split=config.split, resumed=len(done))
+    gated = _gate_pass(
+        tiles, pairs, settings, done, out_dir, package_candidates=want_vlm, report=report
+    )
 
     # Budget remaining after any resumed calls. Computed before submission, not
     # checked per call afterwards: a concurrent or batched submission that checks
@@ -307,6 +389,14 @@ def run_e2e(
         selected = select_candidates(eligible, remaining, strategy=config.sample, seed=config.seed)
 
     selected_set = set(selected)
+    _emit(
+        report,
+        "selected",
+        n_candidates=len(gated.candidates),
+        n_selected=len(selected),
+        strategy=config.sample,
+        cap=config.max_vlm_calls,
+    )
     with open(jsonl_path, "a", encoding="utf-8") as sink:
         # Everything not going to the VLM is final now.
         for tile_id in sorted(gated.rows):
@@ -319,7 +409,7 @@ def run_e2e(
             verify = _verify_batch if config.batch else _verify_sequential
             for tile_id, (verdict, record, err) in verify(
                 selected, gated.packages, api_key, config, out_dir
-            ).items():
+            ):
                 row = gated.rows[tile_id]
                 row["vlm_called"] = True
                 vlm_calls += 1
@@ -346,6 +436,16 @@ def run_e2e(
                     row["cost_usd_synchronous"] = round(sync_record.cost_usd, 6)
                 sink.write(json.dumps(row) + "\n")
                 sink.flush()
+                _emit(
+                    report,
+                    "verified",
+                    tile_id=tile_id,
+                    verdict=row.get("vlm_verdict"),
+                    done=vlm_calls,
+                    total=len(selected),
+                    cost_usd=row.get("cost_usd"),
+                    cumulative_cost_usd=round(cost.vlm_cost_usd, 6),
+                )
 
     rows = list(_load_done(jsonl_path).values())
     return _summarise(rows, cost, config, settings, out_dir, gated.candidates_by_city)
@@ -357,20 +457,35 @@ def _verify_sequential(
     api_key: str | None,
     config: E2EConfig,
     out_dir: Path,  # noqa: ARG001 - kept so both verifiers share one call shape
-) -> dict[str, tuple[Any, Any, str | None]]:
-    """One blocking call per candidate."""
+) -> Iterator[tuple[str, tuple[Any, Any, str | None]]]:
+    """One blocking call per candidate, yielded as it returns.
+
+    Yielding rather than returning a dict is the whole point. This used to
+    accumulate every result and hand them back after the loop, and the caller
+    wrote them afterwards -- so a crash on call 100 lost the 99 that had already
+    been paid for. Each verdict is now handed to the caller, and written, before
+    the next call is made.
+    """
     from satchangegate.vlm.client import verify_candidate
 
-    out: dict[str, tuple[Any, Any, str | None]] = {}
     for tile_id in selected:
         try:
             verdict, record = verify_candidate(
                 packages[tile_id], api_key=api_key, model=config.vlm_model
             )
-            out[tile_id] = (verdict, record, None)
+            yield tile_id, (verdict, record, None)
         except Exception as exc:
-            out[tile_id] = (None, None, f"{type(exc).__name__}: {exc}")
-    return out
+            yield tile_id, (None, None, f"{type(exc).__name__}: {exc}")
+
+
+class UnreadableBatchManifest(RuntimeError):
+    """A batch manifest exists but cannot be read.
+
+    Raised rather than returning "no batch", which is the fail-*open* answer: it
+    sends a fresh submission for work that may already be in flight and bought.
+    A manifest that cannot be understood is a reason to stop and look, not a
+    reason to spend again.
+    """
 
 
 def _live_batch(manifest_path: Path, selected: list[str], model: str) -> str | None:
@@ -379,8 +494,19 @@ def _live_batch(manifest_path: Path, selected: list[str], model: str) -> str | N
         return None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
+    except (json.JSONDecodeError, OSError) as exc:
+        raise UnreadableBatchManifest(
+            f"{manifest_path} exists but could not be read ({exc}). It may record a "
+            f"batch that is still in flight and already paid for. Resubmitting "
+            f"would buy the same work twice, so this stops here. Inspect the file, "
+            f"collect the batch by its id, or delete it if you are certain no "
+            f"batch is outstanding."
+        ) from None
+    if not isinstance(manifest, dict):
+        raise UnreadableBatchManifest(
+            f"{manifest_path} does not contain a batch manifest. Refusing to submit "
+            f"over the top of something that might be an in-flight batch."
+        )
     if manifest.get("model") != model:
         return None
     if set(manifest.get("tile_ids") or []) != set(selected):
@@ -397,7 +523,7 @@ def _verify_batch(
     api_key: str | None,
     config: E2EConfig,
     out_dir: Path,
-) -> dict[str, tuple[Any, Any, str | None]]:
+) -> Iterator[tuple[str, tuple[Any, Any, str | None]]]:
     """Submit every candidate as one Batch API job, at half rate.
 
     The batch id and its custom_id map are written to disk immediately after
@@ -436,7 +562,8 @@ def _verify_batch(
     # collecting costs nothing but time.
     existing = _live_batch(manifest_path, selected, model)
     if existing is not None:
-        return collect_batch(existing, client=client, model=model)
+        yield from collect_batch(existing, client=client, model=model).items()
+        return
 
     requests: list[dict] = []
     failed: dict[str, tuple[Any, Any, str | None]] = {}
@@ -450,7 +577,8 @@ def _verify_batch(
         except Exception as exc:
             failed[tile_id] = (None, None, f"{type(exc).__name__}: {exc}")
     if not requests:
-        return failed
+        yield from failed.items()
+        return
 
     batch_id = submit_batch(requests, client=client)
     manifest_path.write_text(
@@ -467,7 +595,10 @@ def _verify_batch(
     )
     results = collect_batch(batch_id, client=client, model=model)
     results.update(failed)
-    return results
+    # A batch returns all at once by nature, but the caller still writes each row
+    # as it arrives, so an interruption during the write loop loses only what had
+    # not yet been written rather than the whole collection.
+    yield from results.items()
 
 
 # How much surrounding scene to include around the tile under evaluation.

@@ -12,9 +12,162 @@ Two conventions specific to this project:
 - **Negative results are entries too.** Something measured and rejected is a
   result. It belongs here, not only in the commit that deleted it.
 
-## [Unreleased]
+## [0.4.0] — 2026-09-20
+
+A local review UI, and the corrections that had to land before it could be
+honest. The ordering was the whole design: a demo is the easiest possible place
+to undo what this repo is for, so a 2026-09-19 audit ran first and nothing in
+`webui/` was written until every defect it found was fixed and disclosed.
+
+The audit's headline is that **nothing published was materially wrong**. The
+conformal lambda is unchanged, its bound got *tighter*, and the five published
+budget rows are byte-identical after the tie fix. What changed is that those
+properties are now established rather than assumed -- which is the only claim
+this project has ever made for itself.
 
 ### Corrected
+
+Four defects found by a 2026-09-19 audit run while scoping a web UI. One of them
+is in a published guarantee. All four were verified against `eaad03b` before any
+change was made, and all four are now covered by a failing-first test.
+
+- **The conformal guarantee's calibration sample was not independent of the
+  predictor it certified.** Learn-then-Test requires the score being calibrated
+  to come from a model that was not fitted to the calibration tiles.
+  `run_conformal` scored every training city with the already-fitted shipped
+  thresholds and *then* drew the calibration split, so all four calibration
+  cities (abudhabi, mumbai, nantes, pisa) sat inside the fourteen `tune` had
+  swept. `_fit_rows` was discarded with a leading underscore because, by that
+  point, there was nothing left to fit — and the disjointness assertion checked
+  calibration against *test* only, never against *fit*, which was the pair that
+  actually overlapped.
+
+  What was never affected: the held-out FNR, measured on nine cities nothing had
+  seen. What was not established: the 90% confidence bound attached to λ.
+
+  The calibration cities are now withheld *before* the gate is refit, via a new
+  `tune_gate.sweep_tiles`, and a three-way fit/calibration/test assertion
+  replaces the two-way one. **Correcting it moved the numbers very little**: λ is
+  unchanged at 0.200, the bound tightened from 0.198 to **0.186**, and held-out
+  recall moved 0.823 → **0.826**. The refit differs from the shipped thresholds
+  on one axis, `urbanization_score_min` (0.10 → 0.05), which the tuning
+  provenance already records as a grid-order tie rather than evidence. So the
+  published figures were not an artifact of the leak — which is now a
+  measurement, because `conformal` reports the old contaminated result alongside
+  the corrected one rather than asserting the difference is small.
+
+- **`operating-points` could exceed the budget it was pricing.**
+  `threshold_for_call_budget` returned the k-th highest score and callers apply
+  it as `score >= threshold`, so a tie group straddling the budget line was
+  admitted whole. `_metrics_at` counted the overshoot without preventing it.
+  Confidence is rounded to four decimals and 163 of 621 held-out tiles share a
+  value with another (largest group: 87), so this was live rather than
+  hypothetical: sweeping 50 budgets from $0.05 to $2.50 found **three that
+  overshot by one call** ($1.70, $1.80, $2.25). The five published budgets were
+  not among them and their rows are unchanged. A straddling tie is now excluded
+  and the unspent remainder reported as `unused_calls`. Separately, a zero
+  budget serialised its threshold as `1.0` — which readmits any tile scoring
+  exactly 1.0 — and is now `null`, meaning admit nothing.
+
+- **OSCD change masks decoded correctly only from the PNG.** The GeoTIFF branch
+  of `load_label_mask` applied `arr > 0` to OSCD's **1 = unchanged / 2 = changed**
+  encoding, so `bercy-cm.tif` decoded to an all-ones mask — every pixel changed.
+  It never fired in practice only because every city also ships `cm/cm.png`,
+  which wins the candidate order in `_label_path`; the defect sat behind a lucky
+  preference. Encoding is now declared rather than inferred, through a new
+  `decode_label_array`, which raises on values the declared encoding does not
+  define instead of guessing. The corrected TIF decode reproduces the PNG
+  exactly: 0.0074 changed either way, against 1.0000 before.
+
+- **`_verify_sequential` could lose paid work.** It accumulated every result and
+  returned them after the loop, and the caller wrote them afterwards, so a crash
+  on call 100 lost the 99 that had already been bought. Results are now yielded
+  and written one at a time.
+- **An unreadable batch manifest failed open.** `_live_batch` returned "no
+  batch" on a `JSONDecodeError`, so the next run submitted afresh for work that
+  may already have been in flight and paid for. It now raises
+  `UnreadableBatchManifest` and stops. One existing test asserted the old
+  behaviour; it has been corrected, and the correction is the point.
+- **Tier 0 reported non-finite pixels as clean.** Every mask test is a
+  comparison and a comparison against NaN is False, so an unobserved pixel came
+  out as neither cloud nor snow nor shadow — which the code then read as valid.
+  An all-NaN six-band array returned `masks_assessed: true` with
+  `valid_fraction: 1.0`, which is exactly the "unknown is not clean" rule this
+  project states for itself. `valid` now excludes unobserved pixels, and a scene
+  with no finite readings anywhere is unassessable rather than clean. Harmless
+  on OSCD, whose rasters are fully populated, and a live hole for any uploaded
+  scene carrying nodata.
+
+### Added
+
+- **A local web UI** (`satchangegate serve`, behind a `[ui]` extra) and the
+  shared `services/` layer beneath it, which the CLI now goes through too. The
+  UI promises that every panel shows the command producing it; that is only
+  worth anything if the command and the panel run the same code, so commands are
+  rendered from the same validated request object that ran.
+- **`satchangegate run-images`** — the funnel over two image files under a
+  declared contract. Bands are named rather than positional, reflectance scaling
+  is stated rather than guessed from dtype, footprints must genuinely overlap,
+  and nodata becomes invalid rather than zero. Three-band imagery routes to a
+  separate lane where the gate refuses and says which bands it lacks, returning
+  structural evidence under its own result type so nothing can average the two.
+- **A reservation ledger**, so a dollar cap is actually a dollar cap. Counting
+  calls and multiplying by an average is not a spend control: a call is bounded
+  at 4,096 output tokens with four SDK retries, and the analyst report is a
+  separate paid call the count never saw. Spend is now reserved at a
+  conservative upper bound *before* dispatch and settled afterwards from
+  reported tokens. A model with no published rate is refused rather than priced
+  at zero -- `UsageRecord.cost_usd` returning 0.0 is right for a report and a
+  blank cheque for an authorisation. Money is integer micro-dollars, holds
+  survive a restart, and an outcome nobody knows keeps its reservation, because
+  a request that timed out may still have been served.
+- **`satchangegate ab-normalize`** — the producing command
+  `public_reporting_sample/_ab_normalize.json` never had. It was committed from
+  0.3.0 with nothing that could regenerate it, which is the same defect class as
+  a headline number with no code path; a negative result is not exempt. The
+  regenerated artifact reproduces the committed one to four decimals apart from
+  the rule-gate AP, which moved exactly as the `urbanization_score_min` adoption
+  predicted.
+- **`--thresholds`** on every scoring operation, so the threshold playground's
+  export is a file something can actually consume rather than a suggestion.
+- A batch-manifest viewer, and a scorer-parity report that states plainly which
+  code paths honour `scorer.kind` and which always run the rules — `eval`
+  dispatches, `run` and `e2e` call `decide` directly, and comparing across the
+  two would be comparing different models.
+- `--stride` and `--pos-min-fraction` on `tiles`, and `--overwrite` on `e2e`.
+
+### Changed
+
+- **`urbanization_score_min` raised from a tie to a choice: 0.10 -> 0.05.** The
+  0.3.0 sweep reported 0.05 only because it comes first in the grid and scored
+  identically to 0.10, so the code default was kept and the provenance comment
+  said as much. The conformal correction above gave that tie a tiebreaker: a
+  calibrated guarantee needs a gate fitted without the calibration cities, and
+  that refit -- nine cities instead of fourteen -- independently chose 0.05.
+  Keeping 0.10 would have meant publishing a guarantee certifying a gate the repo
+  does not ship.
+
+  **Adoption is free on accuracy.** It moves zero gate decisions on the held-out
+  split; the confusion matrix is identical (TP 178 / FP 43 / FN 167 / TN 146,
+  precision 0.8054, recall 0.5159, F1 0.6290) and the funnel candidate set is
+  unchanged, so the 100 paid verifications remain valid. What moves is
+  `gate_confidence` on 136 of 621 tiles, all upward and by at most 0.058, which
+  shifts two published tables: the operating-point thresholds and the rule gate's
+  own PR curve (AP 0.715 -> 0.712, ROC AUC 0.719 -> 0.714). Both regenerated.
+
+  `satchangegate conformal` now reports `matches_shipped_thresholds: true`, and
+  says plainly that its contaminated-vs-corrected comparison is degenerate as a
+  result -- what had been contaminated was the *provenance* of those thresholds,
+  not their values.
+
+The common shape is worth naming: three of the four were invisible because
+something else masked them — a file-preference order, a dataset with no nodata,
+a score distribution that happened not to tie at the published budgets. A test
+at a comfortable value passes in all three cases. The tests added here sit at
+the boundary instead, which is the lesson the 0.3.0 review already recorded
+about `--max-vlm-calls` and did not generalise far enough.
+
+### Corrected earlier, after the 0.3.0 tag-equivalent
 
 - **The 0.3.0 rule-count fix was incomplete.** "three documented rules" was
   corrected in `baseline.py` but a second occurrence in
@@ -29,6 +182,27 @@ Two conventions specific to this project:
 Both are small, and both are the drift this project exists to catch: a
 correction that names one occurrence of a stale figure and leaves another, and a
 changelog line quoting a number the repo does not print.
+
+### Measured outcomes
+
+| | Before | Now |
+|---|---|---|
+| Conformal lambda | 0.200 | **0.200**, and now independently calibrated |
+| Calibration bound (alpha 0.20) | 0.198 | **0.186** |
+| Held-out FNR / recall | 0.177 / 0.823 | **0.174 / 0.826** |
+| Gate precision / recall / F1 | 0.805 / 0.516 / 0.629 | unchanged |
+| Rule gate AP | 0.715 | 0.712 (confidence moved; decisions did not) |
+| Budgets that overshoot their cap | 3 of 50 swept | **0** |
+| OSCD GeoTIFF label decode | 1.0000 changed | **0.0074**, matching the PNG exactly |
+| Offline tests | 185 | **361** |
+| CLI commands | 14 | **17** |
+
+Two things this release deliberately did *not* do. It did not unify the scorer
+dispatch -- `eval` honours `scorer.kind` while `run` and `e2e` call `decide`
+directly -- so the capability endpoint names which paths apply rather than
+pretending the toggle is global. And it did not wire GOES or Earth Engine, whose
+prerequisites do not exist on the machine this was built on; shipping a button
+for an unverified capability is not a feature.
 
 ## [0.3.0] — 2026-08-30
 

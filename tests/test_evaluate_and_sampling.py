@@ -351,6 +351,58 @@ def test_confusion_matrix_accumulates_across_tiles() -> None:
     assert acc.tp == 12
 
 
+class TestLedgerIsNotSilentlyDestroyed:
+    """A ledger that cost money is not a scratch file."""
+
+    @staticmethod
+    def _ledger(path, rows):
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    def test_a_paid_ledger_blocks_a_rerun_that_would_delete_it(self, tmp_path) -> None:
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(
+            ledger,
+            [
+                {"tile_id": "a", "vlm_called": True, "cost_usd": 0.0047},
+                {"tile_id": "b", "vlm_called": False},
+            ],
+        )
+        with pytest.raises(RuntimeError, match="1 verification"):
+            _refuse_to_discard_paid_work(ledger, overwrite=False)
+
+    def test_overwrite_is_how_you_say_you_meant_it(self, tmp_path) -> None:
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(ledger, [{"tile_id": "a", "vlm_called": True}])
+        assert _refuse_to_discard_paid_work(ledger, overwrite=True) is None
+
+    def test_a_gate_only_ledger_is_replaced_without_ceremony(self, tmp_path) -> None:
+        """The guard is on spend, not on effort."""
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(ledger, [{"tile_id": "a", "vlm_called": False}])
+        assert _refuse_to_discard_paid_work(ledger, overwrite=False) is None
+
+    def test_paid_rows_are_counted_not_guessed(self, tmp_path) -> None:
+        from satchangegate.e2e import count_paid_rows
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(
+            ledger,
+            [
+                {"tile_id": "a", "vlm_called": True},
+                {"tile_id": "b", "vlm_called": True},
+                {"tile_id": "c", "vlm_called": False},
+                {"tile_id": "d"},
+            ],
+        )
+        assert count_paid_rows(ledger) == 2
+
+
 class TestBatchReattachment:
     """A submitted batch is already paid for; a rerun must not buy it twice."""
 
@@ -382,10 +434,30 @@ class TestBatchReattachment:
         path = self._manifest(tmp_path, ["a"], model="claude-haiku-4-5")
         assert _live_batch(path, ["a"], "claude-sonnet-5") is None
 
-    def test_absent_or_corrupt_manifest_is_not_an_error(self, tmp_path: Path) -> None:
+    def test_an_absent_manifest_means_there_is_no_batch(self, tmp_path: Path) -> None:
         from satchangegate.e2e import _live_batch
 
         assert _live_batch(tmp_path / "nope.json", ["a"], "m") is None
+
+    def test_an_unreadable_manifest_stops_rather_than_resubmitting(self, tmp_path: Path) -> None:
+        """This test previously asserted the opposite, and the opposite spends money.
+
+        Returning "no batch" for a manifest that cannot be parsed is the
+        fail-*open* answer: the file exists because a batch was submitted, so a
+        fresh submission buys the same work a second time. A manifest that cannot
+        be understood is a reason to stop and look.
+        """
+        from satchangegate.e2e import UnreadableBatchManifest, _live_batch
+
         bad = tmp_path / "bad.json"
         bad.write_text("{not json", encoding="utf-8")
-        assert _live_batch(bad, ["a"], "m") is None
+        with pytest.raises(UnreadableBatchManifest, match="twice"):
+            _live_batch(bad, ["a"], "m")
+
+    def test_a_manifest_that_is_not_an_object_also_stops(self, tmp_path: Path) -> None:
+        from satchangegate.e2e import UnreadableBatchManifest, _live_batch
+
+        odd = tmp_path / "odd.json"
+        odd.write_text("[1, 2, 3]", encoding="utf-8")
+        with pytest.raises(UnreadableBatchManifest):
+            _live_batch(odd, ["a"], "m")

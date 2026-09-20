@@ -25,7 +25,7 @@ from typing import Literal
 
 import cv2
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from skimage.measure import label as cc_label
 from skimage.metrics import structural_similarity as ssim_fn
 
@@ -138,9 +138,59 @@ class ClassicalResult(BaseModel):
     rgb_only: bool = False
 
 
+class RgbOnlyResult(BaseModel):
+    """What a three-band source can actually support.
+
+    A deliberately *separate* schema rather than ``ClassicalResult`` with nulls
+    poured into it. The gate's eighteen features are defined over six Sentinel-2
+    bands; presenting a subset of them in the same shape would invite a reader,
+    a CSV, or a learned scorer to treat the two as comparable. They are not, and
+    the type is where that should be said.
+
+    Nothing here is a gate decision. RGB cannot support one, so the decision is
+    a refusal and the fields below are evidence a human can look at, not inputs
+    to a verdict.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tile_id: str
+    aoi_id: str
+    source: str
+    date_t1: str
+    date_t2: str
+    masks_assessed: bool
+    registration_error_px: float | None
+    season_delta_days: int | None
+
+    #: Structural evidence, all computable without spectral bands.
+    ssim: float
+    phash_distance: int
+    cva_magnitude_mean: float
+    changed_area_percent: float
+    magnitude_p95: float
+    magnitude_p99: float
+    largest_component_px: int
+    n_components: int
+    component_fill_ratio: float
+
+    spectral_indices_available: bool = False
+    unavailable: list[str] = Field(default_factory=list)
+    classical_gate: GateDecision = "low_quality"
+    gate_reason: str = ""
+    rgb_only: bool = True
+
+
 @dataclass
 class GateArtifacts:
     result: ClassicalResult
+    change_mask: np.ndarray
+    heatmap: np.ndarray
+
+
+@dataclass
+class RgbOnlyArtifacts:
+    result: RgbOnlyResult
     change_mask: np.ndarray
     heatmap: np.ndarray
 
@@ -211,6 +261,34 @@ def compute_cva(
     return np.sqrt(((t2 - t1) ** 2).sum(axis=0)).astype(np.float32)
 
 
+class MissingBandsError(KeyError):
+    """The spectral indices cannot be computed from the bands provided.
+
+    Raised instead of a bare ``KeyError`` on ``bands["B08"]`` so a caller can
+    tell "this source cannot support the gate" apart from "something is wrong".
+    A three-band RGB upload hits this every time, and it is not an error in the
+    imagery -- it is a fact about what RGB can measure.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = sorted(missing)
+        super().__init__(
+            "Spectral indices need "
+            + ", ".join(self.missing)
+            + ". NDVI needs near-infrared and NDBI needs short-wave infrared; "
+            "neither can be recovered from red, green and blue."
+        )
+
+
+#: Bands without which no spectral index can be computed.
+INDEX_BANDS = ("B03", "B04", "B08", "B11")
+
+
+def index_bands_available(bands: dict[str, np.ndarray]) -> bool:
+    """Whether this source can support NDVI/NDBI/NDWI at all."""
+    return all(band in bands for band in INDEX_BANDS)
+
+
 def _index_deltas(
     bands_t1: dict[str, np.ndarray],
     bands_t2: dict[str, np.ndarray],
@@ -219,6 +297,9 @@ def _index_deltas(
 
     Previously NDVI/NDBI deltas were recomputed three times per pair.
     """
+    missing = [b for b in INDEX_BANDS if b not in bands_t1 or b not in bands_t2]
+    if missing:
+        raise MissingBandsError(missing)
     return {
         "ndvi": ndvi(bands_t2["B08"], bands_t2["B04"]) - ndvi(bands_t1["B08"], bands_t1["B04"]),
         "ndbi": ndbi(bands_t2["B11"], bands_t2["B08"]) - ndbi(bands_t1["B11"], bands_t1["B08"]),
@@ -609,6 +690,102 @@ def classical_gate(
         result=result,
         change_mask=change_mask,
         heatmap=compute_heatmap(change_mask, deltas),
+    )
+
+
+#: The gate's refusal when a source cannot support spectral indices. Worded to
+#: be distinguishable from the Tier 0 refusal, which is about the imagery being
+#: unusable rather than about the sensor having fewer bands.
+RGB_ONLY_REASON = (
+    "spectral bands unavailable (RGB-only source): NDVI needs near-infrared and "
+    "NDBI short-wave infrared, so the gate has no landcover evidence to weigh"
+)
+
+
+def rgb_only_gate(
+    pair_id: str,
+    bands_t1: dict[str, np.ndarray],
+    bands_t2: dict[str, np.ndarray],
+    masks: EphemeralMasks,
+    quality: QualityScore,
+    thresholds: GateThresholds | None = None,
+    *,
+    date_t1: str = "t1",
+    date_t2: str = "t2",
+    aoi_id: str | None = None,
+    source: str = "upload",
+) -> RgbOnlyArtifacts:
+    """Structural evidence for a source that cannot support the gate.
+
+    This is not a cheaper gate. It is the gate declining, plus everything a
+    human can still be shown: structural similarity, a perceptual hash distance,
+    and a change-vector magnitude over whatever bands exist. The decision is
+    always ``low_quality`` with :data:`RGB_ONLY_REASON`, and the result carries a
+    different type from a real one so nothing downstream can average the two.
+    """
+    thresholds = thresholds or GateThresholds()
+    rgb1 = bands_to_rgb(bands_t1)
+    rgb2 = bands_to_rgb(bands_t2)
+    disp1, disp2 = stretch_for_display(rgb1, rgb2)
+    gray1 = cv2.cvtColor(rgb_to_uint8(disp1), cv2.COLOR_RGB2GRAY)
+    gray2 = cv2.cvtColor(rgb_to_uint8(disp2), cv2.COLOR_RGB2GRAY)
+
+    valid = masks.valid
+    cva = compute_cva(bands_t1, bands_t2, tuple(sorted(bands_t1)))
+    n_valid = int(valid.sum())
+
+    # No index magnitude exists, so the mask is thresholded on the change vector
+    # alone. It is a weaker instrument and the field name says so.
+    raw = (cva > thresholds.cva_magnitude_threshold) & valid
+    change_mask = despeckle(
+        raw,
+        open_radius=thresholds.open_radius_px,
+        min_size=thresholds.min_component_size_px,
+    ).astype(np.uint8)
+    largest, n_components, fill = component_stats(change_mask)
+    finite = valid & np.isfinite(cva)
+
+    result = RgbOnlyResult(
+        tile_id=pair_id,
+        aoi_id=aoi_id or f"{source}_{pair_id}",
+        source=source,
+        date_t1=date_t1,
+        date_t2=date_t2,
+        masks_assessed=quality.masks_assessed,
+        registration_error_px=quality.registration_error_px,
+        season_delta_days=quality.season_delta_days,
+        ssim=round(compute_ssim(rgb1, rgb2), 4),
+        phash_distance=phash_distance(gray1, gray2),
+        cva_magnitude_mean=round(float(np.mean(cva[valid])) if n_valid else 0.0, 4),
+        changed_area_percent=round(
+            float(100.0 * change_mask.sum() / n_valid) if n_valid else 0.0, 2
+        ),
+        magnitude_p95=round(float(np.percentile(cva[finite], 95.0)) if finite.any() else 0.0, 4),
+        magnitude_p99=round(float(np.percentile(cva[finite], 99.0)) if finite.any() else 0.0, 4),
+        largest_component_px=largest,
+        n_components=n_components,
+        component_fill_ratio=round(fill, 4),
+        unavailable=[
+            "ndvi_delta_mean",
+            "ndbi_delta_mean",
+            "ndwi_delta_mean",
+            "ndvi_delta_abs_mean",
+            "ndbi_delta_abs_mean",
+            "ndwi_delta_abs_mean",
+            "ndvi_delta_p10",
+            "ndbi_delta_p90",
+            "urbanization_score",
+        ],
+        classical_gate="low_quality",
+        gate_reason=RGB_ONLY_REASON,
+    )
+    heatmap = np.clip(
+        cva / max(float(np.percentile(cva[finite], 99.0)) if finite.any() else 1.0, 1e-6), 0, 1
+    )
+    return RgbOnlyArtifacts(
+        result=result,
+        change_mask=change_mask,
+        heatmap=(heatmap * change_mask).astype(np.float32),
     )
 
 

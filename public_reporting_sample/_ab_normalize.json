@@ -1,4 +1,5 @@
 {
+  "split": "test",
   "off": {
     "gate": {
       "recall": 0.5159,
@@ -8,12 +9,12 @@
       "total_reduction_pct": 64.41
     },
     "models": {
-      "rule_gate_confidence": 0.7146,
+      "rule_gate_confidence": 0.7118,
       "logistic_regression": 0.8457,
       "gradient_boosting": 0.8593
     },
     "roc_auc": {
-      "rule_gate_confidence": 0.7186,
+      "rule_gate_confidence": 0.7142,
       "logistic_regression": 0.7835,
       "gradient_boosting": 0.8015
     }
@@ -27,14 +28,23 @@
       "total_reduction_pct": 64.09
     },
     "models": {
-      "rule_gate_confidence": 0.721,
+      "rule_gate_confidence": 0.7171,
       "logistic_regression": 0.7469,
       "gradient_boosting": 0.8449
     },
     "roc_auc": {
-      "rule_gate_confidence": 0.7175,
+      "rule_gate_confidence": 0.7106,
       "logistic_regression": 0.7377,
       "gradient_boosting": 0.789
     }
-  }
+  },
+  "delta_on_minus_off": {
+    "gate_f1": -0.0093,
+    "gate_precision": -0.0162,
+    "rule_gate_confidence_ap": 0.0053,
+    "logistic_regression_ap": -0.0988,
+    "gradient_boosting_ap": -0.0144
+  },
+  "reading": "Negative deltas mean normalization hurt. The linear model loses most, which is the expected shape: on a multi-year pair a large share of ground has genuinely changed, so the invariant population the PIF fit is drawn from is contaminated, and matching the two scenes compresses exactly the scene-wide spectral difference the models were using. A textbook correction that is right in general and wrong here.",
+  "provenance": "This artifact was committed from 0.3.0 with no producing command. That is the same class of defect as a headline number nobody could regenerate, and a negative result is not exempt from it."
 }
