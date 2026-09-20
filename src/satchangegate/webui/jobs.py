@@ -51,8 +51,14 @@ class JobRunner:
         *,
         max_queue: int = DEFAULT_MAX_QUEUE,
         runner: Callable[[str, dict[str, Any]], Any] | None = None,
+        on_settled: Callable[[str, dict[str, Any] | None, str | None], None] | None = None,
     ) -> None:
         self.store = store
+        #: Called once a run reaches a terminal state, with its result or its
+        #: error. The spend ledger uses it to turn a hold into a settled figure,
+        #: which has to happen from the worker: the request that queued the run
+        #: returned long before it finished.
+        self._on_settled = on_settled
         self._queue: queue.Queue[Submission | None] = queue.Queue(maxsize=max_queue)
         self._runner = runner
         self._thread: threading.Thread | None = None
@@ -175,6 +181,7 @@ class JobRunner:
             artifacts = [str(p) for p in getattr(result, "artifacts", ())]
             payload = result.to_dict() if hasattr(result, "to_dict") else {"data": result}
             self.store.mark_succeeded(item.run_id, payload, artifacts)
+            self._settle(item.run_id, payload.get("data"), None)
             self.store.append_event(
                 item.run_id,
                 "finished",
@@ -183,6 +190,7 @@ class JobRunner:
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             self.store.mark_failed(item.run_id, detail)
+            self._settle(item.run_id, None, detail)
             self.store.append_event(
                 item.run_id,
                 "finished",
@@ -195,6 +203,17 @@ class JobRunner:
             )
         finally:
             self._current = None
+
+    def _settle(self, run_id: str, result: dict[str, Any] | None, error: str | None) -> None:
+        """Tell the ledger what happened, and never fail a run for trying.
+
+        A run that has already spent money must not be reported as failed
+        because bookkeeping raised afterwards.
+        """
+        if self._on_settled is None:
+            return
+        with contextlib.suppress(Exception):
+            self._on_settled(run_id, result, error)
 
     def _dispatch(self, item: Submission) -> Any:
         if self._runner is not None:

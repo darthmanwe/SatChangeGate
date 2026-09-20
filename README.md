@@ -612,6 +612,25 @@ can average the two. The vision tier still works there: it only ever sees
 pictures, and a request from that lane is recorded as a manual review, outside
 the funnel's metrics.
 
+### What it costs, before it costs it
+
+```bash
+satchangegate serve --allow-spend --spend-cap-usd 1.00
+```
+
+Paid work is reserved against the cap *before* anything is dispatched, at a
+conservative upper bound rather than an average — a call is capped at 4,096
+output tokens with four retries, so an average-based cap is one a
+worse-than-average run walks straight through. A model with no published rate is
+refused rather than priced at zero. Money is counted in integer micro-dollars,
+holds survive a restart, and an outcome nobody knows keeps its reservation,
+because a request that timed out may still have been served and billed.
+
+Confirmation is bound to one request: change the images, the model, the output
+cap or the call count and the quote is invalid rather than carrying its approval
+onto different work. What the UI shows is derived from reported tokens and a
+versioned rate card — this project's arithmetic, not an invoice.
+
 It binds loopback and **refuses** any other host: the process holds whatever is
 in `.env`, and one per-launch token is not an access policy for a network. It
 makes no external request at all unless you switch the map's basemap on — fonts

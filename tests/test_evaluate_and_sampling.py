@@ -434,10 +434,30 @@ class TestBatchReattachment:
         path = self._manifest(tmp_path, ["a"], model="claude-haiku-4-5")
         assert _live_batch(path, ["a"], "claude-sonnet-5") is None
 
-    def test_absent_or_corrupt_manifest_is_not_an_error(self, tmp_path: Path) -> None:
+    def test_an_absent_manifest_means_there_is_no_batch(self, tmp_path: Path) -> None:
         from satchangegate.e2e import _live_batch
 
         assert _live_batch(tmp_path / "nope.json", ["a"], "m") is None
+
+    def test_an_unreadable_manifest_stops_rather_than_resubmitting(self, tmp_path: Path) -> None:
+        """This test previously asserted the opposite, and the opposite spends money.
+
+        Returning "no batch" for a manifest that cannot be parsed is the
+        fail-*open* answer: the file exists because a batch was submitted, so a
+        fresh submission buys the same work a second time. A manifest that cannot
+        be understood is a reason to stop and look.
+        """
+        from satchangegate.e2e import UnreadableBatchManifest, _live_batch
+
         bad = tmp_path / "bad.json"
         bad.write_text("{not json", encoding="utf-8")
-        assert _live_batch(bad, ["a"], "m") is None
+        with pytest.raises(UnreadableBatchManifest, match="twice"):
+            _live_batch(bad, ["a"], "m")
+
+    def test_a_manifest_that_is_not_an_object_also_stops(self, tmp_path: Path) -> None:
+        from satchangegate.e2e import UnreadableBatchManifest, _live_batch
+
+        odd = tmp_path / "odd.json"
+        odd.write_text("[1, 2, 3]", encoding="utf-8")
+        with pytest.raises(UnreadableBatchManifest):
+            _live_batch(odd, ["a"], "m")

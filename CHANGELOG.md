@@ -68,6 +68,15 @@ change was made, and all four are now covered by a failing-first test.
   define instead of guessing. The corrected TIF decode reproduces the PNG
   exactly: 0.0074 changed either way, against 1.0000 before.
 
+- **`_verify_sequential` could lose paid work.** It accumulated every result and
+  returned them after the loop, and the caller wrote them afterwards, so a crash
+  on call 100 lost the 99 that had already been bought. Results are now yielded
+  and written one at a time.
+- **An unreadable batch manifest failed open.** `_live_batch` returned "no
+  batch" on a `JSONDecodeError`, so the next run submitted afresh for work that
+  may already have been in flight and paid for. It now raises
+  `UnreadableBatchManifest` and stops. One existing test asserted the old
+  behaviour; it has been corrected, and the correction is the point.
 - **Tier 0 reported non-finite pixels as clean.** Every mask test is a
   comparison and a comparison against NaN is False, so an unobserved pixel came
   out as neither cloud nor snow nor shadow — which the code then read as valid.
@@ -91,6 +100,16 @@ change was made, and all four are now covered by a failing-first test.
   and nodata becomes invalid rather than zero. Three-band imagery routes to a
   separate lane where the gate refuses and says which bands it lacks, returning
   structural evidence under its own result type so nothing can average the two.
+- **A reservation ledger**, so a dollar cap is actually a dollar cap. Counting
+  calls and multiplying by an average is not a spend control: a call is bounded
+  at 4,096 output tokens with four SDK retries, and the analyst report is a
+  separate paid call the count never saw. Spend is now reserved at a
+  conservative upper bound *before* dispatch and settled afterwards from
+  reported tokens. A model with no published rate is refused rather than priced
+  at zero -- `UsageRecord.cost_usd` returning 0.0 is right for a report and a
+  blank cheque for an authorisation. Money is integer micro-dollars, holds
+  survive a restart, and an outcome nobody knows keeps its reservation, because
+  a request that timed out may still have been served.
 - `--stride` and `--pos-min-fraction` on `tiles`, and `--overwrite` on `e2e`.
 
 ### Changed

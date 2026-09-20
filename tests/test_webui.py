@@ -447,3 +447,100 @@ class TestRoutesSmoke:
         res = client.get("/api/health")
         assert res.headers["X-Content-Type-Options"] == "nosniff"
         assert res.headers["Referrer-Policy"] == "no-referrer"
+
+
+class TestPaidWorkNeedsAQuote:
+    """Approval is for one request, not for a session."""
+
+    @pytest.fixture
+    def paying(self, tmp_path):
+        return AppConfig(
+            reports=tmp_path / "reports",
+            sample=tmp_path / "sample",
+            run_root=tmp_path / "runs",
+            allow_spend=True,
+            spend_cap_usd=1.00,
+            load_env=False,
+        )
+
+    @pytest.fixture
+    def paying_client(self, paying):
+        return TestClient(create_app(paying), base_url="http://127.0.0.1")
+
+    def test_a_paid_request_without_a_quote_is_refused(self, paying_client, paying) -> None:
+        res = paying_client.post(
+            "/api/runs",
+            json={"operation": "e2e", "params": {"split": "test", "vlm": True, "n": 1}},
+            headers={"X-SCG-Token": paying.token},
+        )
+        assert res.status_code == 402
+        assert "quote" in res.json()["detail"]
+
+    def test_quoting_is_refused_entirely_when_spend_is_off(self, client, config) -> None:
+        res = client.post(
+            "/api/spend/quote",
+            json={"operation": "e2e", "params": {"vlm": True}},
+            headers={"X-SCG-Token": config.token},
+        )
+        assert res.status_code == 403
+
+    def test_a_free_request_needs_no_quote(self, paying_client, paying) -> None:
+        res = paying_client.post(
+            "/api/spend/quote",
+            json={"operation": "e2e", "params": {"split": "test", "vlm": False}},
+            headers={"X-SCG-Token": paying.token},
+        )
+        assert res.json()["quote"] is None
+
+    def test_a_quote_is_an_upper_bound_not_an_estimate(self, paying_client, paying) -> None:
+        res = paying_client.post(
+            "/api/spend/quote",
+            json={
+                "operation": "e2e",
+                "params": {"split": "test", "vlm": True, "max_vlm_calls": 1, "batch": True},
+                "n_calls": 1,
+            },
+            headers={"X-SCG-Token": paying.token},
+        )
+        quote = res.json()["quote"]
+        # The recorded run averaged $0.004689 per batched call; a bound that sat
+        # near the average would be no bound at all.
+        assert quote["worst_case_usd"] > 0.004689 * 10
+        assert "upper bound" in quote["note"]
+
+    def test_a_quote_cannot_be_spent_on_a_different_request(self, paying_client, paying) -> None:
+        quoted = paying_client.post(
+            "/api/spend/quote",
+            json={
+                "operation": "e2e",
+                "params": {"split": "test", "vlm": True, "max_vlm_calls": 1},
+                "n_calls": 1,
+            },
+            headers={"X-SCG-Token": paying.token},
+        ).json()["quote"]
+        res = paying_client.post(
+            "/api/runs",
+            json={
+                "operation": "e2e",
+                "params": {"split": "test", "vlm": True, "max_vlm_calls": 2},
+                "quote_id": quoted["quote_id"],
+            },
+            headers={"X-SCG-Token": paying.token},
+        )
+        assert res.status_code == 402
+        assert "not the one that was quoted" in res.json()["detail"]
+
+    def test_the_ledger_reports_what_it_is(self, paying_client) -> None:
+        body = paying_client.get("/api/spend").json()
+        assert body["enabled"] is True
+        assert body["cap_usd"] == 1.0
+        assert "not an invoice" in body["note"]
+        assert "reserved" in body["policy"] or "reserved" in body["note"]
+
+    def test_an_unknown_reservation_cannot_be_released(self, paying_client, paying) -> None:
+        res = paying_client.post(
+            "/api/spend/made-up/release",
+            json={"note": "nope"},
+            headers={"X-SCG-Token": paying.token},
+        )
+        assert res.status_code == 404

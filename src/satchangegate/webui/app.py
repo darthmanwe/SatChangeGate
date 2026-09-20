@@ -85,6 +85,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     )
     app.state.config = config
     app.state.store = store
+    app.state.reservations = {}
     token_guard = Depends(_require_token(config))
 
     @app.middleware("http")
@@ -529,6 +530,89 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from None
         return {"discarded": upload_id}
 
+    # ------------------------------------------------------------------ spend
+
+    @app.get("/api/spend")
+    def spend_summary() -> dict[str, Any]:
+        return {
+            **_ledger(app, config).summary(),
+            "enabled": config.allow_spend,
+            "policy": (
+                "Spend is reserved at a conservative upper bound before anything "
+                "is dispatched, and settled afterwards from the tokens the API "
+                "reported. A request whose outcome is unknown keeps its hold: it "
+                "may have been served and billed."
+            ),
+        }
+
+    @app.post("/api/spend/quote", dependencies=[token_guard])
+    def spend_quote(payload: dict[str, Any]) -> dict[str, Any]:
+        """Price a request before anyone confirms it.
+
+        The quote is bound to this exact request. Changing the images, the model,
+        the output cap or the call count invalidates it rather than carrying an
+        old approval onto new work.
+        """
+        from satchangegate.services import SERVICES
+        from satchangegate.webui.spend import SpendRefused
+
+        if not config.allow_spend:
+            raise HTTPException(
+                403, "This server was started without --allow-spend; nothing here can be bought."
+            )
+        name = str(payload.get("operation", ""))
+        spec = SERVICES.get(name)
+        if spec is None:
+            raise HTTPException(404, f"Unknown operation {name!r}")
+        try:
+            request = spec.request_type(**(payload.get("params") or {}))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        if not spec.request_spends(request):
+            return {"quote": None, "note": "This request spends nothing; no quote is needed."}
+
+        from satchangegate.vlm.client import (
+            DEFAULT_MAX_RETRIES,
+            DEFAULT_MAX_TOKENS,
+            DEFAULT_VLM_MODEL,
+            resolve_model,
+        )
+
+        model = resolve_model(
+            getattr(request, "model", None) or getattr(request, "vlm_model", None),
+            "ANTHROPIC_VLM_MODEL",
+            DEFAULT_VLM_MODEL,
+        )
+        n_calls = int(payload.get("n_calls") or getattr(request, "max_vlm_calls", None) or 1)
+        try:
+            quote = _ledger(app, config).quote(
+                request=request.model_dump(mode="json"),
+                model=model,
+                n_calls=n_calls,
+                batch=bool(getattr(request, "batch", False)),
+                max_output_tokens=DEFAULT_MAX_TOKENS,
+                attempts=DEFAULT_MAX_RETRIES + 1,
+            )
+        except SpendRefused as exc:
+            raise HTTPException(422, str(exc)) from None
+        return {"quote": quote.to_dict(), "ledger": _ledger(app, config).summary()}
+
+    @app.post("/api/spend/{reservation_id}/release", dependencies=[token_guard])
+    def release_reservation(reservation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Give back a hold, after someone has checked what actually happened.
+
+        Deliberately manual. An automatic release of an uncertain outcome would
+        let the next request spend money that may already be owed.
+        """
+        from satchangegate.webui.spend import SpendRefused
+
+        note = str(payload.get("note") or "reconciled by hand")
+        try:
+            _ledger(app, config).release(reservation_id, note)
+        except SpendRefused as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"released": reservation_id, "ledger": _ledger(app, config).summary()}
+
     # ------------------------------------------------------------------- runs
 
     @app.get("/api/worker")
@@ -573,13 +657,31 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         # Judge the request, not the operation. `e2e --no-vlm` costs nothing but
         # CPU and is the most useful thing to run; blocking it alongside the paid
         # path would make the spend guard an obstacle rather than a control.
-        if spec.request_spends(request) and not config.allow_spend:
-            raise HTTPException(
-                403,
-                "This request would make paid API calls and this server was started "
-                "without --allow-spend. Restart with it and a cap you are happy to "
-                "lose, or submit the same operation with the paid flags off.",
-            )
+        reservation_id: str | None = None
+        if spec.request_spends(request):
+            if not config.allow_spend:
+                raise HTTPException(
+                    403,
+                    "This request would make paid API calls and this server was started "
+                    "without --allow-spend. Restart with it and a cap you are happy to "
+                    "lose, or submit the same operation with the paid flags off.",
+                )
+            from satchangegate.webui.spend import SpendRefused
+
+            quote_id = str(payload.get("quote_id") or "")
+            if not quote_id:
+                raise HTTPException(
+                    402,
+                    "Paid work needs a quote. Ask /api/spend/quote for a price on this "
+                    "exact request, then confirm against it -- approval is for one "
+                    "request, not for a session.",
+                )
+            try:
+                reservation_id = _ledger(app, config).reserve(
+                    quote_id, request=request.model_dump(mode="json")
+                )
+            except SpendRefused as exc:
+                raise HTTPException(402, str(exc)) from None
 
         runner = _runner(app, config)
         params = request.model_dump(mode="json")
@@ -601,8 +703,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 prepare=prepare,
             )
         except QueueFull as exc:
+            if reservation_id:
+                # Nothing was dispatched, so this hold can be given back.
+                _ledger(app, config).release(reservation_id, "queue full; never dispatched")
             raise HTTPException(429, str(exc)) from None
-        return {"run_id": run_id, "command": request.to_command()}
+        if reservation_id:
+            app.state.reservations[run_id] = reservation_id
+        return {
+            "run_id": run_id,
+            "command": request.to_command(),
+            "reservation_id": reservation_id,
+        }
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
@@ -875,6 +986,29 @@ _LEDGER_FIELDS = (
 )
 
 
+def _spent_usd(result: dict[str, Any] | None) -> float:
+    """What a finished run actually cost, from its own reported usage."""
+    if not result:
+        return 0.0
+    funnel = result.get("funnel_cost") or {}
+    cost = funnel.get("cost_usd") or {}
+    if isinstance(cost, dict) and "total" in cost:
+        return float(cost["total"] or 0.0)
+    return float(result.get("cost_usd") or 0.0)
+
+
+def _ledger(app: FastAPI, config: AppConfig) -> Any:
+    """The process-wide spend ledger, created on first use."""
+    existing = getattr(app.state, "ledger", None)
+    if existing is not None:
+        return existing
+    from satchangegate.webui.spend import SpendLedger
+
+    ledger = SpendLedger(_run_root(config) / "spend.db", config.spend_cap_usd)
+    app.state.ledger = ledger
+    return ledger
+
+
 def _run_root(config: AppConfig) -> Path:
     from satchangegate.webui.runs import DEFAULT_RUN_ROOT
 
@@ -895,7 +1029,22 @@ def _runner(app: FastAPI, config: AppConfig) -> Any:
     from satchangegate.webui.runs import DEFAULT_RUN_ROOT, RunStore
 
     store = RunStore(config.run_root or DEFAULT_RUN_ROOT)
-    runner = JobRunner(store)
+
+    def on_settled(run_id: str, result: dict[str, Any] | None, error: str | None) -> None:
+        reservation = app.state.reservations.pop(run_id, None)
+        if reservation is None:
+            return
+        ledger = _ledger(app, config)
+        if error is not None:
+            # The run failed somewhere, and from here there is no way to know
+            # whether a request had already reached the provider. The hold stays,
+            # and a human releases it after looking.
+            ledger.mark_uncertain(reservation, f"run failed: {error}")
+            return
+        spent = _spent_usd(result)
+        ledger.settle(reservation, spent)
+
+    runner = JobRunner(store, on_settled=on_settled)
     app.state.runner = runner
     return runner
 
