@@ -28,6 +28,15 @@ make data     # download 13-band Sentinel-2 OSCD
 make eval     # out-of-sample evaluation on held-out cities
 ```
 
+Or, for a local review surface over the whole thing — map, before/after
+comparison, evidence, metrics, a live threshold playground and every command as
+a form:
+
+```bash
+pip install -e ".[ui]"
+satchangegate serve
+```
+
 Or with Docker, which avoids the GDAL/OpenCV install entirely:
 
 ```bash
@@ -560,11 +569,15 @@ satchangegate run-images --t1 a --t2 b  # your own pair, under a declared contra
 satchangegate serve                  # the local review UI
 ```
 
-Useful flags: `--pixel-metrics` on `eval`, `--sample stratified|sequential` and
-`--batch` on `e2e`.
+Useful flags: `--pixel-metrics` on `eval`; `--sample stratified|sequential`,
+`--batch` and `--overwrite` on `e2e`; `--stride` and `--pos-min-fraction` on
+`tiles`; and `--thresholds` on anything that scores, which is how a threshold
+set exported from the UI gets applied.
 
 Anything that can spend money defaults to not spending it; `--vlm` is opt-in and
-`--max-vlm-calls` is a hard cap.
+`--max-vlm-calls` is a hard cap. `e2e` also refuses to delete a ledger holding
+verifications that were paid for — pass `--resume` to continue that run, or
+`--overwrite` to discard it deliberately.
 
 ## A local UI
 
@@ -595,7 +608,10 @@ to undo what the rest of this repo is for:
 ### Bringing your own imagery
 
 ```bash
-satchangegate run-images --t1 before.tif --t2 after.tif     --bands "B02=1,B03=2,B04=3,B08=4,B11=5,B12=6"     --reflectance-scale 10000 --resolution-m 10
+satchangegate run-images \
+    --t1 before.tif --t2 after.tif \
+    --bands "B02=1,B03=2,B04=3,B08=4,B11=5,B12=6" \
+    --reflectance-scale 10000 --resolution-m 10
 ```
 
 The UI accepts uploads through the same command. It asks for more than a file
