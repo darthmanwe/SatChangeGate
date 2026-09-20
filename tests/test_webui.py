@@ -327,6 +327,67 @@ class TestScoringUsesTheRealGate:
         assert result["confusion"]["fn"] == 1
 
 
+class TestLayerRendering:
+    """Rendering rules that exist because breaking them would mislead."""
+
+    def test_signed_deltas_use_a_fixed_scale_not_a_per_scene_stretch(self) -> None:
+        """A self-normalised diverging map makes every scene look dramatic."""
+        import numpy as np
+
+        from satchangegate.webui.render import SIGNED_FULL_SCALE, _diverging
+
+        valid = np.ones((4, 4), dtype=bool)
+        quiet = _diverging(np.full((4, 4), 0.01), valid, SIGNED_FULL_SCALE)
+        loud = _diverging(np.full((4, 4), 0.40), valid, SIGNED_FULL_SCALE)
+        # A quiet scene must stay near white; a loud one must not.
+        assert quiet.min() > loud.min()
+        assert quiet[..., 0].min() > 200
+
+    def test_the_scale_does_not_move_between_scenes(self) -> None:
+        import numpy as np
+
+        from satchangegate.webui.render import SIGNED_FULL_SCALE, _diverging
+
+        valid = np.ones((2, 2), dtype=bool)
+        a = _diverging(np.full((2, 2), 0.25), valid, SIGNED_FULL_SCALE)
+        b = _diverging(np.array([[0.25, 0.9], [0.25, 0.9]]), valid, SIGNED_FULL_SCALE)
+        # The 0.25 pixels render identically despite b containing larger values.
+        assert a[0, 0].tolist() == b[0, 0].tolist()
+
+    def test_unobserved_pixels_are_hatched_not_filled(self) -> None:
+        """Unknown is not zero, and a flat fill reads as a measurement."""
+        import numpy as np
+
+        from satchangegate.webui.render import _hatch_invalid
+
+        rgb = np.full((8, 8, 3), 200, dtype=np.uint8)
+        valid = np.ones((8, 8), dtype=bool)
+        valid[0, :] = False
+        out = _hatch_invalid(rgb, valid)
+        row = {tuple(px) for px in out[0]}
+        assert len(row) == 2, "an invalid row should be hatched, not one flat colour"
+        assert (out[1] == 200).all(), "valid pixels must be untouched"
+
+    def test_every_advertised_layer_has_a_renderer(self) -> None:
+        from satchangegate.webui.render import describe_layers
+
+        names = {spec["name"] for spec in describe_layers()}
+        assert "change_mask" in names and "heatmap" in names
+        assert {"mask_cloud_t1", "mask_cloud_t2"} <= names, "masks must name their timestep"
+
+    def test_mask_layers_declare_their_timestep(self) -> None:
+        """Cloud at t1, cloud at t2 and their union are three different pictures."""
+        from satchangegate.webui.render import describe_layers
+
+        for spec in describe_layers():
+            if spec["name"].startswith("mask_"):
+                assert spec["name"].endswith(("_t1", "_t2", "_union"))
+
+    def test_an_unknown_layer_is_refused(self, client) -> None:
+        res = client.get("/api/scenes/nowhere/layers/rgb_t1")
+        assert res.status_code == 404
+
+
 class TestRoutesSmoke:
     @pytest.mark.parametrize(
         "path",

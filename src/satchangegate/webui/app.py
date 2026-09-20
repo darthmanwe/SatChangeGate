@@ -256,6 +256,56 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(404, "No committed preview for this scene")
         return Response(path.read_bytes(), media_type="image/png")
 
+    @app.get("/api/scenes/{city}/layers")
+    def scene_layers(city: str) -> dict[str, Any]:
+        """The layer menu for a scene, and the configuration that would render it."""
+        from satchangegate.config import get_settings
+        from satchangegate.webui.render import SIGNED_FULL_SCALE, describe_layers
+
+        if not any(s.city == city for s in _catalogue(config)):
+            raise HTTPException(404, f"No scene named {city!r}")
+        return {
+            "city": city,
+            "layers": describe_layers(),
+            "fingerprint": provenance_fingerprint(),
+            "signed_full_scale": SIGNED_FULL_SCALE,
+            "rendering_notes": [
+                "Signed index deltas use a fixed symmetric range, not a per-scene "
+                "stretch, so two scenes are comparable and a quiet one looks quiet.",
+                "Pixels outside the valid mask are hatched rather than filled: "
+                "unobserved is not zero.",
+                "Quality masks name their timestep. Cloud at t1, cloud at t2 and "
+                "their union are three different pictures.",
+            ],
+            "settings": get_settings().gate.model_dump(),
+        }
+
+    @app.get("/api/scenes/{city}/layers/{name}")
+    def scene_layer(city: str, name: str) -> Response:
+        """One rendered layer.
+
+        Rendered from the configuration this server is running, and stamped with
+        its fingerprint, so a picture cannot be mistaken for one produced under
+        different thresholds.
+        """
+        from satchangegate.config import get_settings
+        from satchangegate.data.oscd import default_oscd_root
+        from satchangegate.webui.render import compute_layers, encode_layer
+
+        if not any(s.city == city for s in _catalogue(config)):
+            raise HTTPException(404, f"No scene named {city!r}")
+        root = Path(config.oscd_root or default_oscd_root())
+        try:
+            layers = compute_layers(root, city, get_settings())
+            blob, legend = encode_layer(layers, name)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from None
+        headers = {
+            "X-SCG-Layer-Scale": str(legend.get("scale", "")),
+            "X-SCG-Config": str(legend.get("fingerprint", "")),
+        }
+        return Response(blob, media_type="image/png", headers=headers)
+
     # -------------------------------------------------------------- artifacts
 
     @app.get("/api/artifacts")
@@ -495,6 +545,14 @@ _LEDGER_FIELDS = (
     "cost_usd",
     "error",
 )
+
+
+def provenance_fingerprint() -> str:
+    """The settings fingerprint stamped onto every rendered layer."""
+    from satchangegate.config import get_settings
+    from satchangegate.pipeline import provenance
+
+    return str(provenance(get_settings())["config_sha256"])
 
 
 def _schema(model: Any) -> dict[str, Any]:
