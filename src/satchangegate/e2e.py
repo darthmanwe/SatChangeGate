@@ -50,6 +50,37 @@ from satchangegate.metrics import ConfusionMatrix, FunnelCost, confusion_from_pa
 SAMPLE_STRATEGIES = ("stratified", "sequential")
 
 
+class LedgerWouldBeDestroyedError(RuntimeError):
+    """Raised rather than deleting verifications that were paid for."""
+
+
+def count_paid_rows(path: Path) -> int:
+    """Verifications in a ledger that were actually bought."""
+    return sum(1 for row in _load_done(path).values() if row.get("vlm_called"))
+
+
+def _refuse_to_discard_paid_work(path: Path, *, overwrite: bool) -> None:
+    """Stop a rerun from silently deleting verifications someone paid for.
+
+    ``run_e2e`` unlinks the ledger whenever it is called without ``resume``, and
+    said nothing about it. The held-out ledger in this repo cost $0.47 and 100
+    live calls to produce; a rerun without the flag destroyed it, along with the
+    per-tile verdicts every downstream report reads.
+
+    A gate-only ledger costs nothing but CPU, so it is still replaced without
+    ceremony. The guard is on spend, not on effort.
+    """
+    paid = count_paid_rows(path)
+    if not paid or overwrite:
+        return
+    raise LedgerWouldBeDestroyedError(
+        f"{path} holds {paid} verification(s) that were paid for, and running "
+        f"without --resume would delete them.\n"
+        f"  --resume     continue that run, keeping what it already bought\n"
+        f"  --overwrite  discard it deliberately and start again"
+    )
+
+
 @dataclass
 class E2EConfig:
     split: str = "test"
@@ -60,6 +91,8 @@ class E2EConfig:
     vlm_model: str | None = None
     sample: str = "stratified"
     batch: bool = False
+    # Deleting a ledger that holds paid verifications has to be asked for.
+    overwrite: bool = False
 
 
 def sample_tiles(tiles: list[Tile], n: int | None, seed: int) -> list[Tile]:
@@ -272,6 +305,7 @@ def run_e2e(
 
     done = _load_done(jsonl_path) if resume else {}
     if not resume and jsonl_path.exists():
+        _refuse_to_discard_paid_work(jsonl_path, overwrite=config.overwrite)
         jsonl_path.unlink()
 
     pairs = {p.pair_id: p for p in discover_pairs(oscd_root)}

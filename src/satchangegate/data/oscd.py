@@ -220,8 +220,73 @@ def load_bands(
     return out
 
 
+# OSCD ships its change masks in two encodings, and which one a file uses is not
+# recoverable from its pixels. The 8-bit PNG renders change as 255 on a 0 ground;
+# the GeoTIFF uses the dataset's own 1 = unchanged, 2 = changed convention. An
+# array holding only 1s is therefore entirely *unchanged* under the GeoTIFF
+# convention and entirely *changed* under the PNG one. Encoding is declared, not
+# sniffed.
+LABEL_ENCODINGS = ("png_0_255", "oscd_tif_1_2", "binary_0_1")
+
+
+def decode_label_array(
+    arr: np.ndarray,
+    *,
+    encoding: str,
+    source: Path | str | None = None,
+) -> np.ndarray:
+    """Decode a raw label raster into a 0/1 changed mask under a declared encoding.
+
+    Raises on values the declared encoding does not define rather than guessing.
+    Guessing is how ``arr > 0`` came to be applied to the GeoTIFF branch: on
+    OSCD's 1/2 encoding that marks every pixel changed, including the unchanged
+    ones. ``data/raw/oscd/bercy/cm/bercy-cm.tif`` holds exactly {1, 2} and would
+    have decoded to an all-ones mask. It never did in practice only because every
+    city also ships ``cm/cm.png``, which wins the candidate order in
+    ``_label_path`` -- so the defect sat behind a lucky preference for years.
+
+    Under ``oscd_tif_1_2`` a 0 is outside the labelled area and is decoded as not
+    changed. Carrying nodata through as a third state would change this return
+    type and everything that consumes it; it belongs with the upload contract,
+    where unlabelled area is common, rather than here, where OSCD's masks have
+    none.
+    """
+    if encoding == "png_0_255":
+        # 8-bit render. Intermediate values can only come from resampling, so
+        # the midpoint is the right cut.
+        return (arr > 127).astype(np.uint8)
+
+    present = {int(v) for v in np.unique(arr)}
+    if encoding == "oscd_tif_1_2":
+        allowed = {0, 1, 2}
+        if not present <= allowed:
+            raise ValueError(
+                f"Label raster {source or arr.shape} holds values {sorted(present)}, "
+                f"which is not the OSCD 1=unchanged / 2=changed encoding "
+                f"(expected a subset of {sorted(allowed)}). Declare the right "
+                f"encoding rather than letting it be inferred."
+            )
+        return (arr == 2).astype(np.uint8)
+
+    if encoding == "binary_0_1":
+        if not present <= {0, 1}:
+            raise ValueError(
+                f"Label raster {source or arr.shape} holds values {sorted(present)}, "
+                f"which is not a 0/1 encoding."
+            )
+        return (arr == 1).astype(np.uint8)
+
+    raise ValueError(f"Unknown label encoding {encoding!r}; expected one of {LABEL_ENCODINGS}")
+
+
 def load_label_mask(pair: ImagePair) -> np.ndarray | None:
-    """Load the binary change mask for a pair, or None when absent."""
+    """Load the binary change mask for a pair, or None when absent.
+
+    The encoding is taken from the file type under OSCD's documented conventions.
+    That is a claim about *this dataset*, which is why it lives in the OSCD
+    loader; an arbitrary uploaded mask has to declare its own encoding through
+    :func:`decode_label_array`.
+    """
     if pair.label_path is None or not pair.label_path.is_file():
         return None
     path = pair.label_path
@@ -229,10 +294,10 @@ def load_label_mask(pair: ImagePair) -> np.ndarray | None:
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
-        return (img > 127).astype(np.uint8)
+        return decode_label_array(img, encoding="png_0_255", source=path)
     with rasterio.open(path) as src:
         arr = src.read(1)
-    return (arr > 0).astype(np.uint8)
+    return decode_label_array(arr, encoding="oscd_tif_1_2", source=path)
 
 
 def verify_layout(root: Path | None = None) -> tuple[bool, str]:

@@ -91,9 +91,10 @@ satchangegate conformal --alpha 0.20 --delta 0.10
 | | Value |
 |---|---|
 | Target | miss ≤ 20% of real change, with 90% confidence |
+| Predictor | gate refit on 9 training cities, **calibration cities withheld** |
 | Calibrated threshold | λ = 0.200 (419 tiles, 179 positive, from abudhabi / mumbai / nantes / pisa) |
-| Calibration FNR | 0.117, upper bound **0.198 ≤ 0.20** ✓ |
-| **Held-out FNR** | **0.177 → recall 0.823**, flagging 74.0% of tiles |
+| Calibration FNR | 0.106, upper bound **0.186 ≤ 0.20** ✓ |
+| **Held-out FNR** | **0.174 → recall 0.826**, flagging 75.3% of tiles |
 
 The guarantee **held overall**. It held on **7 of 9** held-out cities, and
 failed on two:
@@ -105,7 +106,26 @@ failed on two:
 | chongqing | 0.908 | yes |
 | lasvegas | 0.829 | yes |
 | **dubai** | **0.623** | no |
-| **milano** | **0.412** | no |
+| **milano** | **0.471** | no |
+
+**The predictor row is load-bearing, and it was added in September 2026 after
+this section was found to be unsound.** Learn-then-Test needs the score being
+calibrated to come from a model that has not been fitted to the calibration
+tiles. It had been: `tune` fits on all 14 training cities, and all four
+calibration cities were among them, because the split was drawn *after* every
+city had already been scored by the shipped gate. `satchangegate conformal` now
+withholds the calibration cities first and refits the gate on the nine that
+remain, so the threshold certifies a predictor that never saw its own
+calibration set.
+
+Correcting it moved the numbers very little — λ is unchanged, the bound got
+*tighter* rather than looser (0.198 → 0.186), and held-out recall moved 0.823
+→ 0.826 — so the previously published figures were not an artifact of the leak.
+That is now a measurement rather than an assumption: the command reports the old
+contaminated result alongside the corrected one. The refit differs from the
+shipped thresholds on a single axis, `urbanization_score_min` (0.10 → 0.05),
+which the tuning provenance already records as a **grid-order tie rather than
+evidence** — the same tie, resolving the same way, on a smaller set of cities.
 
 That failure is the point, not a defect. A conformal guarantee assumes
 calibration and deployment data are exchangeable, and a *geographic* split
@@ -114,7 +134,7 @@ mumbai, nantes and pisa. The procedure is sound; the assumption is what fails,
 and it fails in a way this repo can measure and name. Anyone deploying to a new
 AOI should read those two rows as the expected behaviour, not the exception.
 
-The price of that recall is spend: λ = 0.200 forwards 74% of tiles rather than
+The price of that recall is spend: λ = 0.200 forwards 75% of tiles rather than
 41%. Which brings the obvious question.
 
 ### What a budget buys
@@ -320,7 +340,7 @@ Honest framing matters more here than a good-looking number, so:
 - **Thresholds are dataset-specific.** They were fitted on 14 cities. Any new
   AOI needs its own validation — and the conformal per-city table above shows
   what that means concretely: the same threshold that misses 0% of change in
-  brasilia misses 59% in milano.
+  brasilia misses 53% in milano.
 - **Refitting found nothing better than what was already shipped.** The latest
   sweep evaluated 8,640 combinations across seven axes and matched the incumbent
   thresholds exactly (in-sample balanced accuracy 0.546 either way). The gate is
@@ -348,6 +368,10 @@ product. A full audit in August 2026 found six that did not:
 | "Measured on the 10 held-out cities" | Nine. All 87 Tier-0 rejections are `saclay_w`, and the flag is scene-level. |
 | "The gate filters 64.6%" | 14.0% was Tier 0 refusing to judge; the gate filtered 58.6% of what remained. |
 | Pixel-level F1 ≈ 0.13 | Traced to a comment about the *train* split, with no reproducing command. The held-out figure is **0.261**. |
+| The conformal guarantee's λ carried a 90% confidence bound | **The calibration sample was not independent of the predictor it certified.** `tune` fits thresholds on all 14 training cities; the four calibration cities (abudhabi, mumbai, nantes, pisa) were all inside that set, because `run_conformal` scored every city with the fitted gate and split calibration out *afterwards*. The disjointness assertion checked calibration against *test* only — never against *fit*, which was the pair that actually overlapped. The held-out FNR was never affected; the bound on λ was not established. Fixed by withholding the calibration cities before refitting. Recomputed: λ unchanged at 0.200, bound 0.198 → **0.186**, held-out recall 0.823 → **0.826**. |
+| `operating-points` never exceeded its budget | It could, on tied scores. The threshold returned was the k-th highest score and callers apply it as `score >= threshold`, so a tie straddling the budget line admitted the whole group. Gate confidence is rounded to 4 dp and 163 of 621 held-out tiles share a value with another, the largest group holding 87 — sweeping 50 budgets found **three that overshot by one call**. The five published rows were not among them and are unchanged. A straddling tie is now excluded and the shortfall reported as `unused_calls`. A zero budget also serialised its threshold as `1.0`, which readmits a tile scoring exactly 1.0; it is now `null`. |
+| OSCD change masks decode correctly from either file | Only from the PNG. The GeoTIFF branch used `arr > 0` against OSCD's **1 = unchanged / 2 = changed** encoding, so `bercy-cm.tif` decoded to an all-ones mask — every pixel changed. It never fired because every city also ships `cm/cm.png`, which wins the candidate order. Encoding is now declared rather than inferred, and the corrected TIF decode reproduces the PNG exactly (0.0074 changed either way). |
+| Tier 0 reports unknown imagery as unknown | Not for non-finite pixels. Every mask test is a comparison and NaN fails every comparison, so an unobserved pixel was counted as neither cloud nor snow nor shadow — i.e. as clean. An all-NaN six-band array came back `masks_assessed: true` with `valid_fraction: 1.0`, which is precisely the "unknown is not clean" rule this repo states for itself. Harmless on OSCD, whose rasters are fully populated; a live hole for any scene carrying nodata. |
 
 Two structural fixes came out of that audit rather than any single number. The
 `oscd`, `e2e` and `vlm` pytest markers were declared and deselected but **no

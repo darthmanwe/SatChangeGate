@@ -16,6 +16,77 @@ Two conventions specific to this project:
 
 ### Corrected
 
+Four defects found by a 2026-09-19 audit run while scoping a web UI. One of them
+is in a published guarantee. All four were verified against `eaad03b` before any
+change was made, and all four are now covered by a failing-first test.
+
+- **The conformal guarantee's calibration sample was not independent of the
+  predictor it certified.** Learn-then-Test requires the score being calibrated
+  to come from a model that was not fitted to the calibration tiles.
+  `run_conformal` scored every training city with the already-fitted shipped
+  thresholds and *then* drew the calibration split, so all four calibration
+  cities (abudhabi, mumbai, nantes, pisa) sat inside the fourteen `tune` had
+  swept. `_fit_rows` was discarded with a leading underscore because, by that
+  point, there was nothing left to fit — and the disjointness assertion checked
+  calibration against *test* only, never against *fit*, which was the pair that
+  actually overlapped.
+
+  What was never affected: the held-out FNR, measured on nine cities nothing had
+  seen. What was not established: the 90% confidence bound attached to λ.
+
+  The calibration cities are now withheld *before* the gate is refit, via a new
+  `tune_gate.sweep_tiles`, and a three-way fit/calibration/test assertion
+  replaces the two-way one. **Correcting it moved the numbers very little**: λ is
+  unchanged at 0.200, the bound tightened from 0.198 to **0.186**, and held-out
+  recall moved 0.823 → **0.826**. The refit differs from the shipped thresholds
+  on one axis, `urbanization_score_min` (0.10 → 0.05), which the tuning
+  provenance already records as a grid-order tie rather than evidence. So the
+  published figures were not an artifact of the leak — which is now a
+  measurement, because `conformal` reports the old contaminated result alongside
+  the corrected one rather than asserting the difference is small.
+
+- **`operating-points` could exceed the budget it was pricing.**
+  `threshold_for_call_budget` returned the k-th highest score and callers apply
+  it as `score >= threshold`, so a tie group straddling the budget line was
+  admitted whole. `_metrics_at` counted the overshoot without preventing it.
+  Confidence is rounded to four decimals and 163 of 621 held-out tiles share a
+  value with another (largest group: 87), so this was live rather than
+  hypothetical: sweeping 50 budgets from $0.05 to $2.50 found **three that
+  overshot by one call** ($1.70, $1.80, $2.25). The five published budgets were
+  not among them and their rows are unchanged. A straddling tie is now excluded
+  and the unspent remainder reported as `unused_calls`. Separately, a zero
+  budget serialised its threshold as `1.0` — which readmits any tile scoring
+  exactly 1.0 — and is now `null`, meaning admit nothing.
+
+- **OSCD change masks decoded correctly only from the PNG.** The GeoTIFF branch
+  of `load_label_mask` applied `arr > 0` to OSCD's **1 = unchanged / 2 = changed**
+  encoding, so `bercy-cm.tif` decoded to an all-ones mask — every pixel changed.
+  It never fired in practice only because every city also ships `cm/cm.png`,
+  which wins the candidate order in `_label_path`; the defect sat behind a lucky
+  preference. Encoding is now declared rather than inferred, through a new
+  `decode_label_array`, which raises on values the declared encoding does not
+  define instead of guessing. The corrected TIF decode reproduces the PNG
+  exactly: 0.0074 changed either way, against 1.0000 before.
+
+- **Tier 0 reported non-finite pixels as clean.** Every mask test is a
+  comparison and a comparison against NaN is False, so an unobserved pixel came
+  out as neither cloud nor snow nor shadow — which the code then read as valid.
+  An all-NaN six-band array returned `masks_assessed: true` with
+  `valid_fraction: 1.0`, which is exactly the "unknown is not clean" rule this
+  project states for itself. `valid` now excludes unobserved pixels, and a scene
+  with no finite readings anywhere is unassessable rather than clean. Harmless
+  on OSCD, whose rasters are fully populated, and a live hole for any uploaded
+  scene carrying nodata.
+
+The common shape is worth naming: three of the four were invisible because
+something else masked them — a file-preference order, a dataset with no nodata,
+a score distribution that happened not to tie at the published budgets. A test
+at a comfortable value passes in all three cases. The tests added here sit at
+the boundary instead, which is the lesson the 0.3.0 review already recorded
+about `--max-vlm-calls` and did not generalise far enough.
+
+### Earlier in Unreleased
+
 - **The 0.3.0 rule-count fix was incomplete.** "three documented rules" was
   corrected in `baseline.py` but a second occurrence in
   `features/classical.py`'s module docstring was missed, so the file that

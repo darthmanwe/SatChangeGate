@@ -10,7 +10,13 @@ import pytest
 
 from satchangegate.config import ALL_BANDS, Settings, get_settings, load_settings
 from satchangegate.data.download import OSCD_FILES, _safe_extract
-from satchangegate.data.oscd import discover_pairs, list_pairs, load_bands, load_label_mask
+from satchangegate.data.oscd import (
+    decode_label_array,
+    discover_pairs,
+    list_pairs,
+    load_bands,
+    load_label_mask,
+)
 from satchangegate.data.tiles import build_tile_index, summarise, tiles_for_pair
 from satchangegate.preprocess.align import (
     estimate_registration_error,
@@ -151,6 +157,44 @@ class TestFixtures:
         assert label is not None
         assert set(np.unique(label)).issubset({0, 1})
         assert label.sum() > 0
+
+
+class TestLabelDecoding:
+    """Encoding is declared, not sniffed."""
+
+    def test_oscd_tif_encoding_reads_two_as_changed(self) -> None:
+        """``arr > 0`` on OSCD's 1=unchanged / 2=changed raster marks the whole
+        frame as changed. That is what the TIF branch used to do."""
+        arr = np.array([[1, 1], [1, 2]], dtype=np.uint8)
+        decoded = decode_label_array(arr, encoding="oscd_tif_1_2")
+        assert decoded.tolist() == [[0, 0], [0, 1]]
+        assert (arr > 0).all(), "the old rule would have called every pixel changed"
+
+    def test_an_all_unchanged_oscd_crop_decodes_to_nothing(self) -> None:
+        arr = np.ones((4, 4), dtype=np.uint8)
+        assert decode_label_array(arr, encoding="oscd_tif_1_2").sum() == 0
+
+    def test_the_same_pixels_mean_the_opposite_under_the_other_encoding(self) -> None:
+        """Why sniffing cannot work: {1} is all-unchanged under one convention
+        and all-changed under the other."""
+        arr = np.ones((4, 4), dtype=np.uint8)
+        assert decode_label_array(arr, encoding="oscd_tif_1_2").sum() == 0
+        assert decode_label_array(arr, encoding="binary_0_1").sum() == 16
+
+    def test_png_encoding_thresholds_at_the_midpoint(self) -> None:
+        arr = np.array([[0, 255], [127, 128]], dtype=np.uint8)
+        assert decode_label_array(arr, encoding="png_0_255").tolist() == [[0, 1], [0, 1]]
+
+    def test_values_outside_the_declared_encoding_raise(self) -> None:
+        arr = np.array([[0, 7]], dtype=np.uint8)
+        with pytest.raises(ValueError, match="not the OSCD"):
+            decode_label_array(arr, encoding="oscd_tif_1_2", source="fake.tif")
+        with pytest.raises(ValueError, match="not a 0/1 encoding"):
+            decode_label_array(arr, encoding="binary_0_1")
+
+    def test_an_unknown_encoding_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="Unknown label encoding"):
+            decode_label_array(np.zeros((2, 2), dtype=np.uint8), encoding="guess")
 
 
 class TestTiles:

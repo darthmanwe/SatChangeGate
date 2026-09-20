@@ -247,9 +247,19 @@ def e2e_cmd(
         False, "--batch/--no-batch", help="Submit via the Batch API (half rate, asynchronous)."
     ),
     resume: bool = typer.Option(False, "--resume/--no-resume", help="Skip completed tiles."),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite/--no-overwrite",
+        help="Discard an existing ledger that holds paid verifications.",
+    ),
 ) -> None:
     """Run the funnel end to end and report measured cost."""
-    from satchangegate.e2e import SAMPLE_STRATEGIES, E2EConfig, run_e2e
+    from satchangegate.e2e import (
+        SAMPLE_STRATEGIES,
+        E2EConfig,
+        LedgerWouldBeDestroyedError,
+        run_e2e,
+    )
 
     if sample not in SAMPLE_STRATEGIES:
         console.print(f"[red]--sample must be one of {SAMPLE_STRATEGIES}[/red]")
@@ -271,20 +281,25 @@ def e2e_cmd(
                 "cap runs out. It is not representative of the split; it exists only "
                 "to reproduce the earlier run.[/yellow]"
             )
-    summary = run_e2e(
-        root,
-        out,
-        config=E2EConfig(
-            split=split,
-            n=n,
-            seed=seed,
-            skip_vlm=not vlm,
-            max_vlm_calls=max_vlm_calls,
-            sample=sample,
-            batch=batch,
-        ),
-        resume=resume,
-    )
+    try:
+        summary = run_e2e(
+            root,
+            out,
+            config=E2EConfig(
+                split=split,
+                n=n,
+                seed=seed,
+                skip_vlm=not vlm,
+                max_vlm_calls=max_vlm_calls,
+                sample=sample,
+                batch=batch,
+                overwrite=overwrite,
+            ),
+            resume=resume,
+        )
+    except LedgerWouldBeDestroyedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
     cost = summary["funnel_cost"]
     table = Table(title=f"Funnel — {split} (n={summary['n']})")
     for col in ("stage", "count", "share"):

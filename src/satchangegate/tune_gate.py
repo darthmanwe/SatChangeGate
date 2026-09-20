@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from satchangegate.config import Settings, get_settings
-from satchangegate.data.tiles import build_tile_index
+from satchangegate.data.tiles import Tile, build_tile_index
 from satchangegate.evaluate import compute_tile_features, score_rows
 from satchangegate.metrics import ConfusionMatrix
 
@@ -67,33 +67,28 @@ def _score(cm: ConfusionMatrix) -> float:
     return 0.0 if ba is None else ba
 
 
-def sweep(
-    oscd_root: Path | None = None,
+def sweep_tiles(
+    oscd_root: Path | None,
+    tiles: list[Tile],
     *,
-    settings: Settings | None = None,
+    settings: Settings,
     grid: dict[str, Sequence[float]] | None = None,
-    split: str = "train",
-    out_dir: Path | None = None,
-) -> SweepResult:
-    """Fit gate thresholds on one split and write a tuning report."""
-    settings = settings or get_settings()
-    grid = grid or SWEEP_GRID
-    out_dir = Path(out_dir or Path("data/reports"))
-    out_dir.mkdir(parents=True, exist_ok=True)
+) -> tuple[SweepResult, SweepResult, int]:
+    """Fit thresholds over an explicit tile list. Returns (best, baseline, n_evaluated).
 
-    all_tiles = build_tile_index(oscd_root)
-    tiles = [t for t in all_tiles if t.split == split]
+    Split off from ``sweep`` so a caller can fit on a *subset* of the training
+    cities without inheriting the CLI path's split filtering or its report
+    writing. ``conformal.run_conformal`` needs exactly that: a predictor fitted
+    with its calibration cities withheld, which is the independence Learn-then-Test
+    requires and which the previous flow did not provide.
+    """
+    grid = dict(grid or SWEEP_GRID)
     if not tiles:
-        raise RuntimeError(f"No tiles in split {split!r}")
-
-    train_cities = {t.city for t in tiles}
-    eval_cities = {t.city for t in all_tiles if t.split != split}
-    assert_disjoint(train_cities, eval_cities)
+        raise RuntimeError("No tiles to fit on")
 
     # background_sigma changes the change mask itself, so it changes the
     # features. It is swept in the outer loop where features are recomputed;
     # the remaining axes only affect the decision and reuse cached features.
-    grid = dict(grid)
     sigmas = list(grid.pop("background_sigma", (settings.gate.background_sigma,)))
     keys = list(grid)
 
@@ -130,6 +125,33 @@ def sweep(
                 )
 
     assert best is not None
+    return best, baseline, n_evaluated
+
+
+def sweep(
+    oscd_root: Path | None = None,
+    *,
+    settings: Settings | None = None,
+    grid: dict[str, Sequence[float]] | None = None,
+    split: str = "train",
+    out_dir: Path | None = None,
+) -> SweepResult:
+    """Fit gate thresholds on one split and write a tuning report."""
+    settings = settings or get_settings()
+    grid = grid or SWEEP_GRID
+    out_dir = Path(out_dir or Path("data/reports"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    all_tiles = build_tile_index(oscd_root)
+    tiles = [t for t in all_tiles if t.split == split]
+    if not tiles:
+        raise RuntimeError(f"No tiles in split {split!r}")
+
+    train_cities = {t.city for t in tiles}
+    eval_cities = {t.city for t in all_tiles if t.split != split}
+    assert_disjoint(train_cities, eval_cities)
+
+    best, baseline, n_evaluated = sweep_tiles(oscd_root, tiles, settings=settings, grid=grid)
     report = {
         "split": split,
         "n_tiles": len(tiles),

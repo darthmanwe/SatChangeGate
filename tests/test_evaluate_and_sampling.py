@@ -351,6 +351,58 @@ def test_confusion_matrix_accumulates_across_tiles() -> None:
     assert acc.tp == 12
 
 
+class TestLedgerIsNotSilentlyDestroyed:
+    """A ledger that cost money is not a scratch file."""
+
+    @staticmethod
+    def _ledger(path, rows):
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    def test_a_paid_ledger_blocks_a_rerun_that_would_delete_it(self, tmp_path) -> None:
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(
+            ledger,
+            [
+                {"tile_id": "a", "vlm_called": True, "cost_usd": 0.0047},
+                {"tile_id": "b", "vlm_called": False},
+            ],
+        )
+        with pytest.raises(RuntimeError, match="1 verification"):
+            _refuse_to_discard_paid_work(ledger, overwrite=False)
+
+    def test_overwrite_is_how_you_say_you_meant_it(self, tmp_path) -> None:
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(ledger, [{"tile_id": "a", "vlm_called": True}])
+        assert _refuse_to_discard_paid_work(ledger, overwrite=True) is None
+
+    def test_a_gate_only_ledger_is_replaced_without_ceremony(self, tmp_path) -> None:
+        """The guard is on spend, not on effort."""
+        from satchangegate.e2e import _refuse_to_discard_paid_work
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(ledger, [{"tile_id": "a", "vlm_called": False}])
+        assert _refuse_to_discard_paid_work(ledger, overwrite=False) is None
+
+    def test_paid_rows_are_counted_not_guessed(self, tmp_path) -> None:
+        from satchangegate.e2e import count_paid_rows
+
+        ledger = tmp_path / "_e2e_test.jsonl"
+        self._ledger(
+            ledger,
+            [
+                {"tile_id": "a", "vlm_called": True},
+                {"tile_id": "b", "vlm_called": True},
+                {"tile_id": "c", "vlm_called": False},
+                {"tile_id": "d"},
+            ],
+        )
+        assert count_paid_rows(ledger) == 2
+
+
 class TestBatchReattachment:
     """A submitted batch is already paid for; a rerun must not buy it twice."""
 

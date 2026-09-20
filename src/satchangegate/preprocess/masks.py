@@ -37,8 +37,13 @@ class EphemeralMasks:
     """Per-timestep contamination masks.
 
     When ``assessed`` is False the mask arrays are all-False placeholders and the
-    fractions are None: the source lacked the bands needed to judge. Callers must
-    not read that as a clean scene.
+    fractions are None: the source lacked the bands needed to judge, or carried
+    no finite readings at all. Callers must not read that as a clean scene.
+
+    ``valid`` excludes unobserved pixels as well as contaminated ones, so nodata
+    shows up as a reduced ``valid_fraction``. The contamination fractions stay
+    over the full frame: they answer "how much of this scene is cloud", which is
+    not the same question as "how much of what we could see".
     """
 
     cloud: np.ndarray
@@ -87,6 +92,26 @@ def can_assess(bands: dict[str, np.ndarray]) -> bool:
     return all(b in bands for b in REQUIRED_BANDS)
 
 
+def observed_pixels(bands: dict[str, np.ndarray]) -> np.ndarray:
+    """Pixels carrying a finite reading in every band needed to judge them.
+
+    NaN and inf are not observations, and until 2026-09-19 they were silently
+    counted as clean ones. Every mask test is a comparison, and a comparison
+    against NaN is False, so a non-finite pixel came out as neither cloud nor
+    snow nor shadow -- which the code then read as valid. An all-NaN six-band
+    array returned ``masks_assessed=True`` with ``valid_fraction=1.0``.
+
+    That is the exact shape of the failure this repo names as its own rule:
+    unknown is not clean. Harmless on OSCD, whose rasters are fully populated,
+    and a live hole for any uploaded scene carrying nodata.
+    """
+    shape = next(iter(bands.values())).shape
+    observed = np.ones(shape, dtype=bool)
+    for band in REQUIRED_BANDS:
+        observed &= np.isfinite(bands[band])
+    return observed
+
+
 def _brightness(bands: dict[str, np.ndarray]) -> np.ndarray:
     """Mean visible reflectance."""
     return (bands["B02"] + bands["B03"] + bands["B04"]) / 3.0
@@ -126,6 +151,12 @@ def compute_ephemeral_masks(
         shape = next(iter(bands.values())).shape
         return unassessed_masks(shape)
 
+    # Nothing finite anywhere means there is nothing to judge, which is a
+    # different statement from "judged, and found clean".
+    observed = observed_pixels(bands)
+    if not observed.any():
+        return unassessed_masks(observed.shape)
+
     green, red = bands["B03"], bands["B04"]
     nir, swir = bands["B08"], bands["B11"]
 
@@ -148,7 +179,10 @@ def compute_ephemeral_masks(
     # Water is reported but is NOT contamination: removing it would make
     # flooding undetectable by construction.
     contaminated = cloud | snow | shadow
-    valid = ~contaminated
+    # Unobserved pixels are invalid rather than clean. A scene that is mostly
+    # nodata therefore fails Tier 0 on valid_fraction, which is the intended
+    # refusal rather than a silent pass.
+    valid = ~contaminated & observed
 
     return EphemeralMasks(
         cloud=cloud.astype(bool),

@@ -85,8 +85,16 @@ def aoi_bbox(city_dir: Path) -> tuple[float, float, float, float] | None:
     """(min_lon, min_lat, max_lon, max_lat) from a city's AOI GeoJSON.
 
     OSCD's ``imgs_*_rect`` rasters carry no CRS or transform -- ``rasterio``
-    reports the identity matrix -- so the AOI polygon is the only georeference
-    available, and it is what maps a pixel grid onto the embedding grid.
+    reports the identity matrix -- so the polygon is what maps a rectified pixel
+    grid onto the embedding grid.
+
+    Corrected 2026-09-19: this used to say the polygon was *the only*
+    georeference available. It is not. The unrectified ``imgs_*`` rasters all
+    carry EPSG:4326 transforms, and on this dataset their arrays are
+    byte-identical to their rectified counterparts, with bounds matching the
+    polygon exactly. Anything that needs a pixel-to-lat/lon mapping should read
+    that transform and fall back to this polygon, rather than interpolating
+    across the bounding box as though nothing better existed.
     """
     matches = sorted(city_dir.glob("*.geojson"))
     if not matches:

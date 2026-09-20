@@ -12,11 +12,13 @@ import numpy as np
 import pytest
 
 from satchangegate.conformal import (
+    assert_three_way_disjoint,
     calibrate,
     evaluate_guarantee,
     false_negative_rate,
     hoeffding_bentkus_ucb,
     split_calibration,
+    split_calibration_cities,
 )
 from satchangegate.data.embeddings import (
     EMBEDDING_FEATURE_NAMES,
@@ -34,6 +36,7 @@ from satchangegate.operating_points import (
     threshold_for_call_budget,
 )
 from satchangegate.preprocess.radiometric import normalize_to_reference
+from satchangegate.tune_gate import assert_disjoint
 
 BANDS = ("B02", "B03", "B04", "B08", "B11", "B12")
 
@@ -112,6 +115,46 @@ class TestConformal:
         with pytest.raises(ValueError, match="at least two cities"):
             split_calibration([{"city": "only", "label": 1}])
 
+    def test_cities_are_split_before_anything_is_fitted(self) -> None:
+        """The city-level split is what lets a caller withhold before fitting."""
+        cities = [f"c{i}" for i in range(10)]
+        cal, fit = split_calibration_cities(cities, fraction=0.3, seed=42)
+        assert cal and fit
+        assert not (cal & fit)
+        assert cal | fit == set(cities)
+
+    def test_the_old_two_way_check_passes_on_the_leak_it_missed(self) -> None:
+        """The defect, pinned as a test.
+
+        ``run_conformal`` asserted calibration against *test* and nothing else,
+        so a predictor fitted on the calibration cities sailed through. The
+        three-way assertion is what actually catches it.
+        """
+        fit = {"a", "b", "cal_city"}
+        cal = {"cal_city"}
+        test = {"x", "y"}
+
+        # What the old flow checked, and why it passed:
+        assert_disjoint(cal, test)
+
+        # What it should have been checking:
+        with pytest.raises(RuntimeError, match="cal_city"):
+            assert_three_way_disjoint(fit, cal, test)
+
+    def test_three_way_disjointness_accepts_a_clean_split(self) -> None:
+        assert assert_three_way_disjoint({"a", "b"}, {"c"}, {"d", "e"}) is None
+
+    def test_an_uncontrolled_calibration_reports_rather_than_evaluates(self) -> None:
+        """When no lambda clears alpha there is nothing to falsify, and the
+        falsifier must say so instead of inventing a threshold."""
+        scores = np.array([0.9, 0.1, 0.8, 0.2])
+        labels = np.array([1, 0, 1, 0])
+        result = calibrate(scores, labels, ["a"] * 4, alpha=0.01, delta=0.01)
+        assert not result.controlled and result.lam is None
+        verdict = evaluate_guarantee(result, scores, labels, ["a"] * 4)
+        assert verdict["held"] is False
+        assert "no controlled threshold" in verdict["error"]
+
 
 class TestOperatingPoints:
     @staticmethod
@@ -137,10 +180,44 @@ class TestOperatingPoints:
         assert point.affordable_calls == 0
         assert point.n_flagged == 0
 
-    def test_threshold_for_budget_respects_ties(self) -> None:
-        """Several tiles can share a score; admitting all of them would overshoot."""
+    def test_a_straddling_tie_is_excluded_rather_than_overshooting(self) -> None:
+        """Ten tiles share one score and the budget is three.
+
+        No threshold can select exactly three of them, so the only choice that
+        respects the budget is to admit none. This test previously asserted the
+        opposite -- that the function returns 0.5 -- which is the value that
+        admits all ten on a budget of three.
+        """
         scores = np.array([0.5] * 10)
-        assert threshold_for_call_budget(scores, 3) == pytest.approx(0.5)
+        assert threshold_for_call_budget(scores, 3) == float("inf")
+
+    def test_a_tie_below_the_budget_line_is_admitted_whole(self) -> None:
+        """Excluding a tie is only correct when taking it would overshoot."""
+        scores = np.array([0.9, 0.8, 0.5, 0.5])
+        assert threshold_for_call_budget(scores, 4) == pytest.approx(0.5)
+        assert threshold_for_call_budget(scores, 2) == pytest.approx(0.8)
+
+    def test_the_budget_holds_at_the_boundary_with_real_ties(self) -> None:
+        """The boundary, not a comfortable value.
+
+        The pre-existing budget test used 100 distinct scores, where no tie can
+        straddle the line and the defect cannot appear.
+        """
+        scores = np.array([0.9, 0.9, 0.1])
+        labels = np.array([1, 0, 1])
+        point = curve_for_budgets(scores, labels, cost_per_call_usd=1.0, budgets_usd=(1.0,))[0]
+        assert point.affordable_calls == 1
+        assert point.n_flagged <= point.affordable_calls
+        assert point.spend_usd <= 1.0
+
+    def test_admitting_nothing_is_not_serialised_as_a_threshold_of_one(self) -> None:
+        """A threshold of 1.0 readmits a tile scoring exactly 1.0."""
+        scores = np.array([1.0, 0.4])
+        labels = np.array([1, 0])
+        point = curve_for_budgets(scores, labels, cost_per_call_usd=1.0, budgets_usd=(0.0,))[0]
+        assert point.threshold is None
+        assert point.to_dict()["threshold"] is None
+        assert point.n_flagged == 0
 
     def test_spend_is_derived_from_what_is_actually_flagged(self) -> None:
         scores, labels = self._scores()

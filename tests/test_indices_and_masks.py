@@ -100,6 +100,42 @@ class TestMasks:
         assert combined.valid_fraction is not None and combined.valid_fraction < 1.0
 
 
+class TestUnobservedPixels:
+    """Unknown is not clean -- the rule this repo states and once broke."""
+
+    @staticmethod
+    def _bands(value: float, shape: tuple[int, int] = (16, 16)) -> dict[str, np.ndarray]:
+        from satchangegate.preprocess.masks import REQUIRED_BANDS
+
+        return {b: np.full(shape, value, dtype=np.float32) for b in REQUIRED_BANDS}
+
+    def test_an_all_nan_scene_is_unassessable_not_clean(self) -> None:
+        """Every mask test is a comparison, and NaN fails every comparison, so
+        a non-finite pixel used to come out as neither cloud nor snow nor
+        shadow -- which the code then read as valid."""
+        masks = compute_ephemeral_masks(self._bands(float("nan")))
+        assert masks.assessed is False
+        assert masks.valid_fraction is None
+
+    def test_nodata_reduces_the_valid_fraction(self) -> None:
+        bands = self._bands(0.1)
+        bands["B08"][:8, :] = np.nan
+        masks = compute_ephemeral_masks(bands)
+        assert masks.assessed is True
+        assert masks.valid_fraction == pytest.approx(0.5)
+
+    def test_an_infinite_reading_is_not_an_observation(self) -> None:
+        bands = self._bands(0.1)
+        bands["B11"][0, :] = np.inf
+        masks = compute_ephemeral_masks(bands)
+        assert masks.valid[0, :].sum() == 0
+
+    def test_a_fully_finite_scene_is_unaffected(self) -> None:
+        masks = compute_ephemeral_masks(self._bands(0.1))
+        assert masks.assessed is True
+        assert masks.valid_fraction == pytest.approx(1.0)
+
+
 class TestQuality:
     def test_unassessed_masks_yield_unknown_not_perfect(self) -> None:
         u = unassessed_masks((8, 8))
